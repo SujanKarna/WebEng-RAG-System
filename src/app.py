@@ -1,13 +1,13 @@
+import os
 import gradio as gr
 from src.helper_utils import word_wrap
 from src.query_engine import (
     load_collection,
-    login_to_hf,
     answer_with_rag
 )
 
 # build the collection once at startup
-
+os.environ["HF_SPACE"] = "1"  # Set this to "1" to indicate we're running in a Hugging Face Space
 collection = load_collection()
 
 def rag_search(query: str):
