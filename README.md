@@ -55,7 +55,7 @@ Upcoming additions:
 ```bash
 git clone https://github.com/SujanKarna/WebEng-RAG-System.git
 cd WebEng-RAG-System 
-'''
+```
 
 ### 2. Create a virtual environment
 
@@ -63,31 +63,31 @@ cd WebEng-RAG-System
 python -m venv .venv
 source .venv/bin/activate   # Linux/Mac
 .venv\Scripts\activate      # Windows
-'''
+```
 
 ### 3. Install dependencies
 
 ```bash
 pip install -r requirements.txt 
-'''
+```
 
 ### 4. Set your Groq API key
 
 ```bash
 GROQ_API_KEY = "your_key_here"
-'''
+```
 
 ### 5. Build the vectorstore
 
 ```bash
 python -m src.build_vectorstore
-'''
+```
 
 ### 6. Run the Gradio app
 
 ```bash
 python -m src.app_gradio
-'''
+```
 
 ## 🤝 Contributing
 Contributions are welcome.
