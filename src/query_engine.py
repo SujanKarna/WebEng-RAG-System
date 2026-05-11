@@ -13,6 +13,8 @@ from src.config import (
 from src.ingest_pdf import load_pdf_texts
 from src.chunking import character_split, token_split
 from src.vectorstore import create_chroma_collection, add_documents_to_collection, query_collection
+from src.llm_engine import generate_answer
+
 
 # Log in to Hugging Face Hub
 def login_to_hf():
@@ -21,13 +23,7 @@ def login_to_hf():
     else:
         raise ValueError("HF_TOKEN is not set in the environment variables.")
     
-def build_collection():
-    pdf_texts = load_pdf_texts(PDF_PATH)
-    char_chunks = character_split(pdf_texts, CHUNK_SIZE, CHUNK_OVERLAP)
-    token_chunks = token_split(char_chunks, TOKENS_PER_CHUNK, CHUNK_OVERLAP)
-    collection = create_chroma_collection(COLLECTION_NAME, EMBEDDING_MODEL_NAME)
-    add_documents_to_collection(collection, token_chunks)
-    return collection
+
 
 def load_collection():
     return create_chroma_collection(
@@ -39,3 +35,13 @@ def answer_query(collection, query: str, n_results: int = N_RESULTS) -> List[str
     retrieved_docs = query_collection(collection, query, n_results)
     return retrieved_docs
 
+
+
+def answer_with_rag(collection, query: str, n_results: int = N_RESULTS):
+    docs = answer_query(collection, query, n_results)
+
+    if not docs:
+        return "No relevant documents found.\nKeine relevanten Dokumente gefunden.", []
+
+    answer = generate_answer(query, docs)
+    return answer, docs

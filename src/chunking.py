@@ -9,6 +9,9 @@ def character_split(texts: List[str], chunk_size: int = 1000, chunk_overlap: int
     character_split_texts = []
     for text in texts:
         character_split_texts += character_splitter.split_text(text)
+    
+    # Clean up empty chunks here
+    character_split_texts = [c.strip() for c in character_split_texts if c.strip()]
     return character_split_texts
 
 # Splits the character chunks into smaller chunks based on tokens
@@ -19,4 +22,7 @@ def token_split(character_chunks: List[str], token_per_chunk: int = 256, chunk_o
     token_split_texts = []
     for text in character_chunks:
         token_split_texts += token_splitter.split_text(text)
+    
+    # Clean up empty chunks here
+    token_split_texts = [c.strip() for c in token_split_texts if c.strip()]
     return token_split_texts
