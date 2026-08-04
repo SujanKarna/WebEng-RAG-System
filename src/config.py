@@ -12,7 +12,7 @@ EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME", "intfloat/multilingual-
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", 1000))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", 0))
 TOKENS_PER_CHUNK = int(os.getenv("TOKENS_PER_CHUNK", 256))
-N_RESULTS = int(os.getenv("N_RESULTS", 3))
+N_RESULTS = int(os.getenv("N_RESULTS", 10))
 
 
 # Local vs HuggingFace detection
