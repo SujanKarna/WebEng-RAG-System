@@ -1,21 +1,23 @@
 # Defining how each block of text is represented
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 @dataclass
 class Block:
 
-    page: int
-    text: str
+    pdf_page: int
+    printed_page: int | None = None
 
-    x0: float
-    y0: float
-    x1: float
-    y1: float
+    text: str = ""
 
-    font_size: float
-    font_name: str
+    x0: float = 0
+    y0: float = 0
+    x1: float = 0
+    y1: float = 0
 
-    is_bold: bool
+    font_size: float = 0
+    font_name: str = ""
 
-    spans: list[dict[str, Any]]
+    is_bold: bool = False
+
+    spans: list[dict[str, Any]] = field(default_factory=list)

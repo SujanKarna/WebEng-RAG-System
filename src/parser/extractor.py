@@ -67,7 +67,7 @@ def extract(pdf_path: str) -> list[Block]:
 
             blocks.append(
                 Block(
-                    page=page_number,
+                    pdf_page=page_number,
 
                     text=text,
 
