@@ -138,28 +138,28 @@ main_segments = detect_content_sections(
     main_segments
 )
 
-# for s in main_segments:
+for s in main_segments:
 
-#     print(
-#         s.block.printed_page,
-#         "|",
-#         s.section_type,
-#         "|",
-#         s.content_section,
-#         "|",
-#         s.text[:50]
-#     )
+    print(
+        s.block.printed_page,
+        "|",
+        s.section_type,
+        "|",
+        s.content_section,
+        "|",
+        s.text[:50]
+    )
 
 #-----------------------------------------
 # 5. Build heirarchy
 #-----------------------------------------
 
-analyzer = StructureAnalyzer()
+# analyzer = StructureAnalyzer()
 
 
-tree = analyzer.build_tree(
-    main_segments
-)
+# tree = analyzer.build_tree(
+#     main_segments
+# )
 
 
-print_tree(tree)
+# print_tree(tree)
