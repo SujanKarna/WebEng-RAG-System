@@ -1,234 +1,127 @@
-import re
-from pathlib import Path
+"""
+Document Cleaner
+================
+
+Cleans zone-annotated PDF extraction blocks.
+
+Responsibilities
+----------------
+1. Remove unwanted document zones.
+2. Remove publication headers and footers.
+3. Normalize extracted text.
+4. Remove empty blocks.
+5. Preserve useful provenance metadata.
+
+The cleaner does NOT:
+- detect sections
+- detect headings
+- chunk text
+- generate embeddings
+
+Those are separate pipeline stages.
+"""
+
+from dataclasses import dataclass, asdict
 from typing import Any
+import re
+
+from src.etl.parser.zone_detector import DocumentZone
+from src.etl.parser.toc.toc_processor import process_toc
+
+# ============================================================
+# CLEAN BLOCK
+# ============================================================
+
+@dataclass
+class CleanBlock:
+    """
+    Represents a cleaned piece of document content.
+
+    This is intentionally much smaller than the raw PDF block.
+
+    Raw extraction details such as individual spans and font
+    information are no longer needed after cleaning.
+    """
+
+    # --------------------------------------------------------
+    # Source identification
+    # --------------------------------------------------------
+
+    page_index: int
+
+    page_number: int
+
+    block_index: int
+
+    # --------------------------------------------------------
+    # Document location
+    # --------------------------------------------------------
+
+    bbox: list[float]
+
+    # --------------------------------------------------------
+    # Structural information
+    # --------------------------------------------------------
+
+    zone: str
+
+    # --------------------------------------------------------
+    # Cleaned textual content
+    # --------------------------------------------------------
+
+    text: str
+
+    # --------------------------------------------------------
+    # Original block reference
+    # --------------------------------------------------------
+
+    source_block_index: int
 
 
 # ============================================================
-# TEXT NORMALIZATION
+# CONFIGURATION
 # ============================================================
 
-def normalize_whitespace(text: str) -> str:
-    """
-    Normalize whitespace while preserving meaningful
-    paragraph/line separation.
+# Zones that should NOT enter the RAG knowledge base.
 
-    Examples
-    --------
-    Multiple spaces:
-        "Web    Engineering"
-        ->
-        "Web Engineering"
-
-    Tabs:
-        "Web\\tEngineering"
-        ->
-        "Web Engineering"
-
-    Excessive blank lines:
-        "A\\n\\n\\nB"
-        ->
-        "A\\n\\nB"
-    """
-
-    # Normalize different newline representations.
-
-    text = text.replace(
-        "\r\n",
-        "\n",
-    )
-
-    text = text.replace(
-        "\r",
-        "\n",
-    )
-
-    # Replace tabs with spaces.
-
-    text = text.replace(
-        "\t",
-        " ",
-    )
-
-    # Remove trailing whitespace from every line.
-
-    lines = [
-        line.rstrip()
-        for line in text.split("\n")
-    ]
-
-    # Remove leading/trailing whitespace from every line.
-
-    lines = [
-        line.strip()
-        for line in lines
-    ]
-
-    # Collapse repeated spaces inside each line.
-
-    lines = [
-        re.sub(
-            r"[ ]{2,}",
-            " ",
-            line,
-        )
-        for line in lines
-    ]
-
-    # Collapse more than two consecutive blank lines.
-
-    cleaned_lines = []
-
-    previous_blank = False
-
-    for line in lines:
-
-        is_blank = not line
-
-        if is_blank and previous_blank:
-            continue
-
-        cleaned_lines.append(line)
-
-        previous_blank = is_blank
-
-    return "\n".join(
-        cleaned_lines
-    ).strip()
+EXCLUDED_ZONES = {
+    DocumentZone.INTRODUCTION.value,
+    DocumentZone.TABLE_OF_CONTENTS.value,
+    DocumentZone.STUDY_PLAN.value,
+}
 
 
-def normalize_soft_hyphen(text: str) -> str:
-    """
-    Remove Unicode soft-hyphen characters.
+# Zones that contain actual knowledge.
 
-    PDF extraction can occasionally contain invisible
-    soft-hyphen characters.
-    """
-
-    return text.replace(
-        "\u00ad",
-        "",
-    )
-
-
-def normalize_broken_words(text: str) -> str:
-    """
-    Repair words broken by PDF line wrapping.
-
-    Example
-    -------
-        Enginee-
-        ring
-
-    becomes:
-
-        Engineering
-
-    while preserving normal hyphenated words such as:
-
-        E-Mail
-        Web-basierte
-
-    The rule only joins a hyphen when the hyphen occurs
-    immediately before a newline and is followed by a
-    lowercase/uppercase alphabetic character.
-    """
-
-    # Handle hyphen + newline + word continuation.
-
-    text = re.sub(
-        r"(?<=[A-Za-zÄÖÜäöüß])-\n(?=[A-Za-zÄÖÜäöüß])",
-        "",
-        text,
-    )
-
-    return text
-
-
-def normalize_text(text: str) -> str:
-    """
-    Apply all basic text normalization operations.
-    """
-
-    if not text:
-        return ""
-
-    text = normalize_soft_hyphen(
-        text
-    )
-
-    text = normalize_broken_words(
-        text
-    )
-
-    text = normalize_whitespace(
-        text
-    )
-
-    return text
+RETAINED_ZONES = {
+    DocumentZone.MAIN_REGULATIONS.value,
+    DocumentZone.MODULE_DESCRIPTIONS.value,
+}
 
 
 # ============================================================
-# PAGE NUMBER DETECTION
-# ============================================================
-
-def is_page_number_block(
-    text: str,
-) -> bool:
-    """
-    Determine whether a block contains only a standalone
-    page number.
-
-    Examples
-    --------
-        "12"
-        "12 "
-        " 12 "
-
-    are considered page-number candidates.
-
-    More complicated content such as:
-
-        "Nr. 48/2025"
-
-    is NOT classified as a page number.
-    """
-
-    text = text.strip()
-
-    if not text:
-        return False
-
-    return bool(
-        re.fullmatch(
-            r"\d{1,4}",
-            text,
-        )
-    )
-
-
-# ============================================================
-# BLOCK TEXT EXTRACTION
+# TEXT EXTRACTION
 # ============================================================
 
 def extract_block_text(
     block: dict[str, Any],
 ) -> str:
     """
-    Reconstruct block text from its extracted lines and spans.
+    Reconstruct text from the raw extraction block.
 
-    The raw extractor already provides lines and spans.
-    We use the span text rather than relying on a separate
-    PDF extraction pass.
+    The extractor stores text as:
+
+        block
+            └── lines
+                  └── spans
+                        └── text
+
+    We reconstruct the text while preserving line boundaries.
     """
 
-    lines = block.get(
-        "lines",
-        [],
-    )
+    lines = []
 
-    reconstructed_lines = []
-
-    for line in lines:
+    for line in block.get("lines", []):
 
         spans = line.get(
             "spans",
@@ -236,20 +129,227 @@ def extract_block_text(
         )
 
         line_text = "".join(
-            span.get(
-                "text",
-                "",
-            )
+            span.get("text", "")
             for span in spans
         )
 
-        reconstructed_lines.append(
-            line_text
+        if line_text.strip():
+
+            lines.append(
+                line_text.strip()
+            )
+
+    return "\n".join(lines)
+
+
+# ============================================================
+# WHITESPACE NORMALIZATION
+# ============================================================
+
+def normalize_whitespace(
+    text: str,
+) -> str:
+    """
+    Normalize whitespace without destroying paragraph
+    structure.
+
+    Examples
+    --------
+
+    Multiple spaces:
+
+        "hello    world"
+
+    becomes:
+
+        "hello world"
+
+
+    Excessive blank lines:
+
+        "hello\\n\\n\\nworld"
+
+    becomes:
+
+        "hello\\n\\nworld"
+    """
+
+    # --------------------------------------------------------
+    # Normalize spaces/tabs inside lines.
+    # --------------------------------------------------------
+
+    lines = []
+
+    for line in text.splitlines():
+
+        line = re.sub(
+            r"[ \t]+",
+            " ",
+            line,
         )
 
-    return "\n".join(
-        reconstructed_lines
+        line = line.strip()
+
+        if line:
+            lines.append(line)
+
+    # --------------------------------------------------------
+    # Preserve one newline between meaningful lines.
+    # --------------------------------------------------------
+
+    return "\n".join(lines)
+
+
+# ============================================================
+# HYPHENATION CLEANING
+# ============================================================
+
+def repair_line_break_hyphenation(
+    text: str,
+) -> str:
+    """
+    Repair words broken across PDF line boundaries.
+
+    Example:
+
+        konsekuti-
+        ven
+
+    becomes:
+
+        konsekutiven
+
+    This only handles a hyphen immediately followed by a
+    lowercase continuation on the next line.
+
+    We deliberately do NOT remove normal hyphens inside words.
+
+    Example:
+
+        Teilzeitstudium
+        Web-Engineering
+
+    should remain unchanged.
+    """
+
+    text = re.sub(
+        r"(?<=[A-Za-zÄÖÜäöüß])-\n(?=[a-zäöüß])",
+        "",
+        text,
     )
+
+    return text
+
+
+# ============================================================
+# TEXT CLEANING
+# ============================================================
+
+def clean_text(
+    text: str,
+) -> str:
+    """
+    Apply all textual cleaning operations.
+    """
+
+    # --------------------------------------------------------
+    # Repair words split across lines.
+    # --------------------------------------------------------
+
+    text = repair_line_break_hyphenation(
+        text
+    )
+
+    # --------------------------------------------------------
+    # Normalize whitespace.
+    # --------------------------------------------------------
+
+    text = normalize_whitespace(
+        text
+    )
+
+    return text.strip()
+
+
+# ============================================================
+# PUBLICATION HEADER / FOOTER DETECTION
+# ============================================================
+
+def is_publication_header_or_footer(
+    text: str,
+) -> bool:
+    """
+    Detect recurring official-publication header/footer text.
+
+    These elements are not part of the actual study regulation
+    content and should not be embedded.
+
+    IMPORTANT:
+    This function should remain conservative.
+
+    We do not remove arbitrary short text because short text
+    may be legitimate headings such as:
+
+        § 1 Geltungsbereich
+    """
+
+    normalized = " ".join(
+        text.split()
+    ).lower()
+
+    # --------------------------------------------------------
+    # Official publication header.
+    # --------------------------------------------------------
+
+    if normalized == "amtliche bekanntmachungen":
+        return True
+
+    # --------------------------------------------------------
+    # Official publication footer/header.
+    # --------------------------------------------------------
+
+    if (
+        normalized.startswith(
+            "amtliche bekanntmachungen"
+        )
+        and "nr. 48/2025" in normalized
+    ):
+        return True
+
+    # --------------------------------------------------------
+    # Publication number.
+    # --------------------------------------------------------
+
+    if re.fullmatch(
+        r"nr\.?\s*48/2025",
+        normalized,
+    ):
+        return True
+
+    # --------------------------------------------------------
+    # Publication date.
+    # --------------------------------------------------------
+
+    if normalized in {
+        "19. dezember 2025",
+        "vom 19. dezember 2025",
+    }:
+        return True
+
+    # --------------------------------------------------------
+    # Page numbers printed by the publication.
+    #
+    # We deliberately keep this conservative because actual
+    # regulation content can contain numbers.
+    # --------------------------------------------------------
+
+    if re.fullmatch(
+        r"seite\s+\d+",
+        normalized,
+    ):
+        return True
+
+    return False
 
 
 # ============================================================
@@ -259,300 +359,208 @@ def extract_block_text(
 def clean_block(
     block: dict[str, Any],
     page: dict[str, Any],
-) -> dict[str, Any] | None:
+) -> CleanBlock | None:
     """
-    Clean one raw extraction block.
+    Clean a single extracted block.
 
     Returns
     -------
-    dict
-        Cleaned block.
+    CleanBlock
+        If the block should be retained.
 
     None
         If the block should be discarded.
     """
 
+    # --------------------------------------------------------
+    # Get zone.
+    # --------------------------------------------------------
+
+    zone = block.get(
+        "zone"
+    )
+
+    # --------------------------------------------------------
+    # Safety check.
+    #
+    # The cleaner expects zone detection to have already run.
+    # --------------------------------------------------------
+
+    if zone is None:
+
+        raise ValueError(
+            "Block does not contain a 'zone'. "
+            "Run zone detection before cleaning."
+        )
+
+    # --------------------------------------------------------
+    # Remove unwanted zones.
+    # --------------------------------------------------------
+
+    if zone in EXCLUDED_ZONES:
+
+        return None
+
+    # --------------------------------------------------------
+    # Only retain knowledge-bearing zones.
+    # --------------------------------------------------------
+
+    if zone not in RETAINED_ZONES:
+
+        return None
+
+    # --------------------------------------------------------
+    # Extract raw text.
+    # --------------------------------------------------------
+
     raw_text = extract_block_text(
         block
     )
 
-    text = normalize_text(
+    # --------------------------------------------------------
+    # Clean text.
+    # --------------------------------------------------------
+
+    text = clean_text(
         raw_text
     )
 
     # --------------------------------------------------------
-    # REMOVE EMPTY BLOCKS
+    # Remove empty blocks.
     # --------------------------------------------------------
 
     if not text:
+
         return None
 
     # --------------------------------------------------------
-    # DETERMINE ROLE
+    # Remove publication headers and footers.
     # --------------------------------------------------------
 
-    if is_page_number_block(
+    if is_publication_header_or_footer(
         text
     ):
-        role = "page_number"
-    else:
-        role = "text"
+
+        return None
 
     # --------------------------------------------------------
-    # BUILD CLEAN BLOCK
+    # Page metadata.
     # --------------------------------------------------------
 
-    return {
-        "block_index": block.get(
-            "block_index"
-        ),
+    page_index = page.get(
+        "page_index",
+        0,
+    )
 
-        "page_index": page.get(
-            "page_index"
-        ),
+    page_number = page.get(
+        "page_number",
+        page_index + 1,
+    )
 
-        "page_number": page.get(
-            "page_number"
-        ),
+    # --------------------------------------------------------
+    # Bounding box.
+    # --------------------------------------------------------
 
-        "bbox": block.get(
-            "bbox"
-        ),
-
-        "role": role,
-
-        "text": text,
-
-        # Keep references to the raw structure.
-        #
-        # This is useful later for debugging and provenance.
-
-        "source": {
-            "block_index": block.get(
-                "block_index"
-            ),
-        },
-    }
-
-
-# ============================================================
-# PAGE CLEANING
-# ============================================================
-
-def clean_page(
-    page: dict[str, Any],
-) -> dict[str, Any]:
-    """
-    Clean all blocks belonging to one PDF page.
-    """
-
-    cleaned_blocks = []
-
-    blocks = page.get(
-        "blocks",
+    bbox = block.get(
+        "bbox",
         [],
     )
 
-    for block in blocks:
+    # --------------------------------------------------------
+    # Block index.
+    # --------------------------------------------------------
 
-        # PyMuPDF text blocks use type 0.
-        #
-        # Ignore image/vector blocks at this stage.
+    block_index = block.get(
+        "block_index",
+        -1,
+    )
 
-        if block.get(
-            "type"
-        ) != 0:
+    # --------------------------------------------------------
+    # Construct clean block.
+    # --------------------------------------------------------
 
-            continue
-
-        cleaned = clean_block(
-            block=block,
-            page=page,
-        )
-
-        if cleaned is None:
-            continue
-
-        cleaned_blocks.append(
-            cleaned
-        )
-
-    return {
-        "page_index": page.get(
-            "page_index"
-        ),
-
-        "page_number": page.get(
-            "page_number"
-        ),
-
-        "width": page.get(
-            "width"
-        ),
-
-        "height": page.get(
-            "height"
-        ),
-
-        "blocks": cleaned_blocks,
-    }
+    return CleanBlock(
+        page_index=page_index,
+        page_number=page_number,
+        block_index=block_index,
+        bbox=bbox,
+        zone=zone,
+        text=text,
+        source_block_index=block_index,
+    )
 
 
 # ============================================================
 # DOCUMENT CLEANING
 # ============================================================
 
-def clean_document(
-    extraction: dict[str, Any] | list[dict[str, Any]],
-) -> dict[str, Any]:
+def clean(
+    pages: list[dict[str, Any]],
+) -> list[CleanBlock]:
     """
-    Clean the complete extracted document.
+    Clean the entire zone-annotated document.
 
-    Supports both:
+    Parameters
+    ----------
+    pages:
+        Extracted pages whose blocks already contain a
+        "zone" field.
 
-        {
-            "pages": [...]
-        }
-
-    and:
-
-        [...]
-    
-    depending on how the extraction JSON is structured.
+    Returns
+    -------
+    list[CleanBlock]
+        Cleaned blocks.
     """
 
-    # --------------------------------------------------------
-    # SUPPORT BOTH POSSIBLE ROOT STRUCTURES
-    # --------------------------------------------------------
-
-    if isinstance(
-        extraction,
-        dict,
-    ):
-
-        pages = extraction.get(
-            "pages",
-            [],
-        )
-
-    elif isinstance(
-        extraction,
-        list,
-    ):
-
-        pages = extraction
-
-    else:
-
-        raise TypeError(
-            "Extraction must be a dictionary or list."
-        )
+    cleaned_blocks: list[CleanBlock] = []
 
     # --------------------------------------------------------
-    # CLEAN PAGES
+    # Process pages in document order.
     # --------------------------------------------------------
-
-    cleaned_pages = []
 
     for page in pages:
 
-        cleaned_page = clean_page(
-            page
-        )
+        # ----------------------------------------------------
+        # Process blocks in extraction order.
+        # ----------------------------------------------------
 
-        cleaned_pages.append(
-            cleaned_page
-        )
+        for block in page.get(
+            "blocks",
+            [],
+        ):
 
-    # --------------------------------------------------------
-    # RETURN CLEANED DOCUMENT
-    # --------------------------------------------------------
+            cleaned = clean_block(
+                block=block,
+                page=page,
+            )
 
-    return {
-        "pages": cleaned_pages
-    }
+            # ------------------------------------------------
+            # Keep only blocks that survived cleaning.
+            # ------------------------------------------------
 
+            if cleaned is not None:
 
-# ============================================================
-# FILE HELPERS
-# ============================================================
+                cleaned_blocks.append(
+                    cleaned
+                )
 
-def load_extraction(
-    input_path: Path,
-) -> dict[str, Any] | list[dict[str, Any]]:
-    """
-    Load raw extraction JSON from disk.
-    """
-
-    import json
-
-    with input_path.open(
-        "r",
-        encoding="utf-8",
-    ) as file:
-
-        return json.load(
-            file
-        )
-
-
-def save_cleaned_document(
-    document: dict[str, Any],
-    output_path: Path,
-) -> None:
-    """
-    Save the cleaned document as JSON.
-    """
-
-    import json
-
-    output_path.parent.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    with output_path.open(
-        "w",
-        encoding="utf-8",
-    ) as file:
-
-        json.dump(
-            document,
-            file,
-            indent=2,
-            ensure_ascii=False,
-        )
+    return cleaned_blocks
 
 
 # ============================================================
-# PIPELINE ENTRY FUNCTION
+# SERIALIZATION HELPER
 # ============================================================
 
-def clean_extraction_file(
-    input_path: Path,
-    output_path: Path,
-) -> None:
+def clean_blocks_to_dicts(
+    blocks: list[CleanBlock],
+) -> list[dict[str, Any]]:
     """
-    Complete file-based cleaning operation.
+    Convert CleanBlock dataclasses into dictionaries.
 
-    raw extraction JSON
-            ↓
-        load JSON
-            ↓
-        clean document
-            ↓
-        save cleaned JSON
+    Useful when saving the cleaned result to JSON.
     """
 
-    extraction = load_extraction(
-        input_path
-    )
-
-    cleaned = clean_document(
-        extraction
-    )
-
-    save_cleaned_document(
-        document=cleaned,
-        output_path=output_path,
-    )
+    return [
+        asdict(block)
+        for block in blocks
+    ]

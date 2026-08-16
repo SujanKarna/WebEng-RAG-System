@@ -17,7 +17,7 @@ DATA_DIR = PROJECT_ROOT / "data"
 RAW_DATA_DIR = DATA_DIR / "raw"
 METADATA_DIR = DATA_DIR / "metadata"
 
-
+PROCESSED_DATA_DIR = DATA_DIR / "processed"
 # ---------------------------------------------------------
 # TU Chemnitz source
 # ---------------------------------------------------------
@@ -70,3 +70,32 @@ CLEANED_EXTRACTION_PATH = (
     / "tu_chemnitz_web_engineering_2025_cleaned.json"
 )
 
+# =============================================================================
+# PROCESSED FILES
+# =============================================================================
+
+CLEANED_BLOCKS_PATH = (
+    PROCESSED_DATA_DIR
+    / "cleaned_blocks.json"
+)
+
+TOC_PATH = (
+    PROCESSED_DATA_DIR
+    / "toc.json"
+)
+
+
+# ---------------------------------------------------------
+# Directory helper
+# ---------------------------------------------------------
+
+def ensure_data_directories():
+    """
+    Create all required data directories if they do not exist.
+    """
+
+    RAW_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    METADATA_DIR.mkdir(parents=True, exist_ok=True)
+    EXTRACTED_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    CLEANED_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    PROCESSED_DATA_DIR.mkdir(parents=True, exist_ok=True)

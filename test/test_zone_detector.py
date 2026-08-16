@@ -1,11 +1,15 @@
-from pathlib import Path
-from collections import Counter
-import json
+"""
+Test the document zone detector.
 
-from src.etl.parser.zone_detector import (
-    assign_zones,
-    get_block_text,
-)
+This test prints every zone transition and the final
+zone distribution.
+"""
+
+import json
+from pathlib import Path
+from collections import Counter, defaultdict
+
+from src.etl.parser.zone_detector import detect_zones
 
 
 # ============================================================
@@ -23,21 +27,37 @@ EXTRACTION_PATH = (
 
 
 # ============================================================
-# MAIN TEST
+# HELPERS
+# ============================================================
+
+def get_block_text(block):
+    """
+    Reconstruct block text for display.
+    """
+
+    parts = []
+
+    for line in block.get("lines", []):
+
+        text = "".join(
+            span.get("text", "")
+            for span in line.get("spans", [])
+        )
+
+        if text.strip():
+            parts.append(text.strip())
+
+    return " ".join(parts)
+
+
+# ============================================================
+# MAIN
 # ============================================================
 
 def main():
 
-    print("=" * 80)
-    print("DOCUMENT ZONE DETECTOR TEST")
-    print("=" * 80)
-
-    print()
-    print("Extraction file:")
-    print(f"  {EXTRACTION_PATH}")
-
     # --------------------------------------------------------
-    # LOAD RAW EXTRACTION
+    # Load extraction
     # --------------------------------------------------------
 
     with EXTRACTION_PATH.open(
@@ -45,53 +65,65 @@ def main():
         encoding="utf-8",
     ) as file:
 
-        document = json.load(file)
+        pages = json.load(file)
 
-    # --------------------------------------------------------
-    # HANDLE BOTH POSSIBLE JSON STRUCTURES
-    # --------------------------------------------------------
-    #
-    # Your extraction currently appears to be a list of pages.
-    #
-    # But this also supports:
-    #
-    # {
-    #     "pages": [...]
-    # }
-    #
-    # This makes the test more robust.
-    # --------------------------------------------------------
+    print("=" * 80)
+    print("DOCUMENT ZONE DETECTOR TEST")
+    print("=" * 80)
 
-    if isinstance(document, list):
-
-        pages = document
-
-    elif isinstance(document, dict):
-
-        pages = document.get(
-            "pages",
-            []
-        )
-
-    else:
-
-        raise ValueError(
-            "Unexpected extraction JSON structure."
-        )
+    print()
+    print(f"Extraction file:")
+    print(f"  {EXTRACTION_PATH}")
 
     print()
     print(f"Total pages: {len(pages)}")
 
     # --------------------------------------------------------
-    # RUN ZONE DETECTOR
+    # Remember original zones so we can detect transitions.
     # --------------------------------------------------------
 
-    zoned_pages = assign_zones(
-        pages
-    )
+    previous_zone = None
+
+    transitions = []
 
     # --------------------------------------------------------
-    # DETECT TRANSITIONS
+    # Detect zones
+    # --------------------------------------------------------
+
+    pages = detect_zones(pages)
+
+    # --------------------------------------------------------
+    # Inspect transitions
+    # --------------------------------------------------------
+
+    for page in pages:
+
+        page_number = page.get(
+            "page_number",
+            page.get("page_index", 0) + 1,
+        )
+
+        for block in page.get("blocks", []):
+
+            zone = block.get("zone")
+
+            if zone != previous_zone:
+
+                transitions.append(
+                    {
+                        "page": page_number,
+                        "block": block.get(
+                            "block_index"
+                        ),
+                        "zone": zone,
+                        "text": get_block_text(block),
+                    }
+                )
+
+                previous_zone = zone
+
+    # --------------------------------------------------------
+    # Print transitions
     # --------------------------------------------------------
 
     print()
@@ -99,66 +131,50 @@ def main():
     print("ZONE TRANSITIONS")
     print("=" * 80)
 
-    previous_zone = None
+    for index, transition in enumerate(
+        transitions,
+        start=1,
+    ):
 
-    transition_number = 0
+        print()
+        print(f"[TRANSITION {index}]")
 
-    for page in zoned_pages:
-
-        page_number = page.get(
-            "page_number",
-            page.get(
-                "page_index",
-                0
-            ) + 1
+        print(
+            f"Page       : "
+            f"{transition['page']}"
         )
 
-        for block in page.get(
-            "blocks",
-            []
-        ):
+        print(
+            f"Block      : "
+            f"{transition['block']}"
+        )
 
-            zone = block.get(
-                "zone",
-                "unknown"
-            )
+        print(
+            f"New zone   : "
+            f"{transition['zone']}"
+        )
 
-            # Only print when the zone changes.
-
-            if zone != previous_zone:
-
-                transition_number += 1
-
-                text = get_block_text(
-                    block
-                )
-
-                print()
-                print(
-                    f"[TRANSITION {transition_number}]"
-                )
-
-                print(
-                    f"Page       : {page_number}"
-                )
-
-                print(
-                    f"Block      : "
-                    f"{block.get('block_index')}"
-                )
-
-                print(
-                    f"New zone   : {zone}"
-                )
-
-                print(
-                    f"Text       : {text[:300]}"
-                )
-
-                previous_zone = zone
+        print(
+            f"Text       : "
+            f"{transition['text'][:500]}"
+        )
 
     # --------------------------------------------------------
-    # COUNT BLOCKS BY ZONE
+    # Count blocks per zone.
+    # --------------------------------------------------------
+
+    zone_counts = Counter()
+
+    for page in pages:
+
+        for block in page.get("blocks", []):
+
+            zone = block.get("zone")
+
+            zone_counts[zone] += 1
+
+    # --------------------------------------------------------
+    # Print distribution.
     # --------------------------------------------------------
 
     print()
@@ -166,30 +182,36 @@ def main():
     print("ZONE DISTRIBUTION")
     print("=" * 80)
 
-    zone_counts = Counter()
-
-    for page in zoned_pages:
-
-        for block in page.get(
-            "blocks",
-            []
-        ):
-
-            zone = block.get(
-                "zone",
-                "unknown"
-            )
-
-            zone_counts[zone] += 1
-
     for zone, count in zone_counts.items():
 
         print(
-            f"{zone:<25} : {count:>5} blocks"
+            f"{zone:<25}: "
+            f"{count:>6} blocks"
         )
 
     # --------------------------------------------------------
-    # COUNT PAGES CONTAINING EACH ZONE
+    # Determine pages per zone.
+    # --------------------------------------------------------
+
+    zone_pages = defaultdict(set)
+
+    for page in pages:
+
+        page_number = page.get(
+            "page_number",
+            page.get("page_index", 0) + 1,
+        )
+
+        for block in page.get("blocks", []):
+
+            zone = block.get("zone")
+
+            zone_pages[zone].add(
+                page_number
+            )
+
+    # --------------------------------------------------------
+    # Print pages per zone.
     # --------------------------------------------------------
 
     print()
@@ -197,55 +219,21 @@ def main():
     print("PAGES PER ZONE")
     print("=" * 80)
 
-    zone_pages = {}
-
-    for page in zoned_pages:
-
-        page_number = page.get(
-            "page_number",
-            page.get(
-                "page_index",
-                0
-            ) + 1
-        )
-
-        zones_on_page = set()
-
-        for block in page.get(
-            "blocks",
-            []
-        ):
-
-            zones_on_page.add(
-                block.get(
-                    "zone",
-                    "unknown"
-                )
-            )
-
-        for zone in zones_on_page:
-
-            zone_pages.setdefault(
-                zone,
-                []
-            ).append(
-                page_number
-            )
-
     for zone, page_numbers in zone_pages.items():
 
+        sorted_pages = sorted(
+            page_numbers
+        )
+
+        print()
         print(
-            f"{zone:<25} : "
-            f"{len(page_numbers):>3} pages"
+            f"{zone:<25}: "
+            f"{len(sorted_pages):>3} pages"
         )
 
         print(
-            f"  Pages: {page_numbers}"
+            f"  Pages: {sorted_pages}"
         )
-
-    # --------------------------------------------------------
-    # FINISHED
-    # --------------------------------------------------------
 
     print()
     print("=" * 80)
@@ -258,5 +246,4 @@ def main():
 # ============================================================
 
 if __name__ == "__main__":
-
     main()
