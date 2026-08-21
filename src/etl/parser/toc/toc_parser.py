@@ -1,9 +1,22 @@
+"""
+TOC Parser
+==========
+
+Converts cleaned/extracted TOC blocks into a structured
+navigation hierarchy:
+
+    Teil
+      └── §
+
+The parser does not read files and does not save files.
+"""
+
 import re
 from typing import Any
 
 
 # ============================================================
-# REGULAR EXPRESSIONS
+# REGEX
 # ============================================================
 
 PART_PATTERN = re.compile(
@@ -12,7 +25,7 @@ PART_PATTERN = re.compile(
 )
 
 PARAGRAPH_PATTERN = re.compile(
-    r"§\s*\d+"
+    r"(§\s*\d+)\s+([^§]+?)(?=\s+§\s*\d+|$)"
 )
 
 
@@ -21,18 +34,7 @@ PARAGRAPH_PATTERN = re.compile(
 # ============================================================
 
 def normalize_text(text: str) -> str:
-    """
-    Normalize whitespace.
-
-    Example:
-
-        Studienbeginn und
-        Regelstudienzeit
-
-    becomes:
-
-        Studienbeginn und Regelstudienzeit
-    """
+    """Normalize whitespace."""
 
     return re.sub(
         r"\s+",
@@ -42,37 +44,10 @@ def normalize_text(text: str) -> str:
 
 
 # ============================================================
-# PART DETECTION
+# PART
 # ============================================================
 
-def is_part(text: str) -> bool:
-    """
-    Return True if the text represents a Teil heading.
-    """
-
-    return (
-        PART_PATTERN.match(
-            normalize_text(text)
-        )
-        is not None
-    )
-
-
-def parse_part(text: str) -> dict[str, str]:
-    """
-    Parse a Teil heading.
-
-    Example:
-
-        Teil 1 Allgemeine Bestimmungen
-
-    returns:
-
-        {
-            "part": "Teil 1",
-            "title": "Allgemeine Bestimmungen"
-        }
-    """
+def parse_part(text: str) -> dict[str, Any]:
 
     text = normalize_text(text)
 
@@ -84,24 +59,19 @@ def parse_part(text: str) -> dict[str, str]:
         )
 
     return {
-        "part": normalize_text(
-            match.group(1)
-        ),
-        "title": normalize_text(
-            match.group(2)
-        ),
+        "part": match.group(1),
+        "title": match.group(2).strip(),
+        "regulations": [],
     }
 
 
 # ============================================================
-# PARAGRAPH PARSING
+# PARAGRAPHS
 # ============================================================
 
-def parse_paragraphs(
-    text: str,
-) -> list[dict[str, str]]:
+def parse_paragraphs(text: str) -> list[dict[str, str]]:
     """
-    Extract all § entries from a single text block.
+    Extract multiple § entries from one TOC block.
 
     Example:
 
@@ -109,67 +79,25 @@ def parse_paragraphs(
         § 2 Studienbeginn und Regelstudienzeit
         § 3 Zugangsvoraussetzungen
 
-    becomes:
-
-        [
-            {
-                "paragraph": "§ 1",
-                "title": "Geltungsbereich"
-            },
-            {
-                "paragraph": "§ 2",
-                "title": "Studienbeginn und Regelstudienzeit"
-            },
-            {
-                "paragraph": "§ 3",
-                "title": "Zugangsvoraussetzungen"
-            }
-        ]
+    becomes three regulation entries.
     """
 
     text = normalize_text(text)
 
-    matches = list(
-        PARAGRAPH_PATTERN.finditer(text)
-    )
+    matches = PARAGRAPH_PATTERN.findall(text)
 
-    paragraphs = []
+    regulations = []
 
-    for index, match in enumerate(matches):
+    for paragraph, title in matches:
 
-        start = match.start()
-
-        if index + 1 < len(matches):
-            end = matches[index + 1].start()
-        else:
-            end = len(text)
-
-        entry = text[start:end].strip()
-
-        paragraph_match = re.match(
-            r"^(§\s*\d+)\s*(.*)$",
-            entry,
-        )
-
-        if not paragraph_match:
-            continue
-
-        paragraph_number = normalize_text(
-            paragraph_match.group(1)
-        )
-
-        title = normalize_text(
-            paragraph_match.group(2)
-        )
-
-        paragraphs.append(
+        regulations.append(
             {
-                "paragraph": paragraph_number,
-                "title": title,
+                "paragraph": normalize_text(paragraph),
+                "title": normalize_text(title),
             }
         )
 
-    return paragraphs
+    return regulations
 
 
 # ============================================================
@@ -180,24 +108,13 @@ def parse_toc(
     blocks: list[dict[str, Any]],
 ) -> dict[str, Any]:
     """
-    Parse TOC blocks into a hierarchical structure.
-
-    Expected result:
+    Parse TOC blocks into:
 
         {
-            "parts": [
-                {
-                    "part": "Teil 1",
-                    "title": "Allgemeine Bestimmungen",
-                    "regulations": [
-                        {
-                            "paragraph": "§ 1",
-                            "title": "Geltungsbereich"
-                        }
-                    ]
-                }
-            ]
+            "parts": [...]
         }
+
+    Only table_of_contents blocks are processed.
     """
 
     toc = {
@@ -208,29 +125,46 @@ def parse_toc(
 
     for block in blocks:
 
-        text = normalize_text(
-            block.get("text", "")
-        )
+        if block.get("zone") != "table_of_contents":
+            continue
+
+        text = block.get("text", "")
 
         if not text:
             continue
 
-        # --------------------------------------------------------
-        # Ignore TOC heading
-        # --------------------------------------------------------
+        text = normalize_text(text)
+
+        # ----------------------------------------------------
+        # Ignore heading
+        # ----------------------------------------------------
 
         if text.lower() == "inhaltsübersicht":
             continue
 
-        # --------------------------------------------------------
-        # Detect Teil
-        # --------------------------------------------------------
+        # ----------------------------------------------------
+        # Ignore page number
+        # ----------------------------------------------------
 
-        if is_part(text):
+        if text.isdigit():
+            continue
+
+        # ----------------------------------------------------
+        # Ignore Anlagen entry
+        # ----------------------------------------------------
+
+        if text.lower().startswith("anlagen:"):
+            continue
+
+        # ----------------------------------------------------
+        # Detect Teil
+        # ----------------------------------------------------
+
+        part_match = PART_PATTERN.match(text)
+
+        if part_match:
 
             current_part = parse_part(text)
-
-            current_part["regulations"] = []
 
             toc["parts"].append(
                 current_part
@@ -238,19 +172,22 @@ def parse_toc(
 
             continue
 
-        # --------------------------------------------------------
+        # ----------------------------------------------------
         # Detect § entries
-        # --------------------------------------------------------
+        # ----------------------------------------------------
 
-        if current_part is None:
-            continue
+        if "§" in text:
 
-        paragraphs = parse_paragraphs(
-            text
-        )
+            if current_part is None:
 
-        current_part["regulations"].extend(
-            paragraphs
-        )
+                raise ValueError(
+                    f"Paragraph found before Teil: {text}"
+                )
+
+            regulations = parse_paragraphs(text)
+
+            current_part["regulations"].extend(
+                regulations
+            )
 
     return toc

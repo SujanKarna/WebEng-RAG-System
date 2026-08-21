@@ -2,117 +2,100 @@
 TOC Processor
 =============
 
-Responsible for:
+Extracts the Table of Contents from zone-detected PDF pages
+and converts it into a structured representation.
 
-1. Selecting blocks belonging to the TOC zone.
-2. Reconstructing their text from raw extraction data.
-3. Calling the TOC parser.
-4. Saving the resulting TOC JSON.
+This processor works directly on the output of:
+
+    PDF extraction
+        ↓
+    zone detection
+        ↓
+    TOC processor
 """
 
 import json
-from pathlib import Path
 from typing import Any
 
-from src.etl.parser.zone_detector import (
-    get_block_text,
-)
+from src.config.settings import TOC_PATH
 
-from src.etl.parser.toc.toc_parser import (
-    parse_toc,
-)
+from src.etl.parser.zone_detector import get_block_text
+
+from src.etl.parser.toc.toc_parser import parse_toc
 
 
 # ============================================================
-# TOC BLOCK EXTRACTION
+# FLATTEN PAGES
 # ============================================================
 
-def extract_toc_blocks(
+def flatten_blocks(
     pages: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     """
-    Extract TOC blocks and reconstruct their text.
+    Flatten page/block structure into a single block list.
 
-    Raw extraction stores text inside:
+    Text is reconstructed from the raw PDF extraction
+    structure and temporarily attached as:
 
-        block
-            └── lines
-                  └── spans
-                        └── text
-
-    The TOC parser expects:
-
-        {
-            "zone": "table_of_contents",
-            "text": "..."
-        }
+        block["text"]
     """
 
-    toc_blocks = []
+    blocks = []
 
     for page in pages:
 
-        for block in page.get(
-            "blocks",
-            [],
-        ):
-
-            if (
-                block.get("zone")
-                != "table_of_contents"
-            ):
-                continue
-
-            text = get_block_text(
-                block
-            )
-
-            if not text:
-                continue
+        for block in page.get("blocks", []):
 
             # ------------------------------------------------
-            # Create parser-ready block
+            # Reconstruct text from lines/spans
             # ------------------------------------------------
 
-            toc_blocks.append(
-                {
-                    "page_index": page.get(
-                        "page_index"
-                    ),
-                    "page_number": page.get(
-                        "page_number"
-                    ),
-                    "block_index": block.get(
-                        "block_index"
-                    ),
-                    "zone": block.get(
-                        "zone"
-                    ),
-                    "text": text,
-                }
-            )
+            text = get_block_text(block)
 
-    return toc_blocks
+            # ------------------------------------------------
+            # Create a shallow copy.
+            #
+            # We do not modify the original extraction.
+            # ------------------------------------------------
+
+            toc_block = {
+                **block,
+                "page_index": page.get("page_index"),
+                "page_number": page.get("page_number"),
+                "text": text,
+            }
+
+            blocks.append(toc_block)
+
+    return blocks
 
 
 # ============================================================
-# TOC PROCESSING
+# EXTRACT TOC
 # ============================================================
 
-def process_toc(
+def extract_toc(
     pages: list[dict[str, Any]],
 ) -> dict[str, Any]:
     """
-    Extract and parse the TOC.
+    Extract and structure the Table of Contents.
+
+    Parameters
+    ----------
+    pages:
+        Zone-detected PDF pages.
+
+    Returns
+    -------
+    dict
+        Structured TOC.
     """
 
-    toc_blocks = extract_toc_blocks(
-        pages
-    )
+    blocks = flatten_blocks(pages)
 
-    return parse_toc(
-        toc_blocks
-    )
+    toc = parse_toc(blocks)
+
+    return toc
 
 
 # ============================================================
@@ -121,10 +104,10 @@ def process_toc(
 
 def save_toc(
     toc: dict[str, Any],
-    output_path: Path,
+    output_path=TOC_PATH,
 ) -> None:
     """
-    Save parsed TOC as JSON.
+    Save structured TOC to JSON.
     """
 
     output_path.parent.mkdir(
