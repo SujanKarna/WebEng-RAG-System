@@ -22,10 +22,15 @@ from src.etl.parser.cleaner import (
     clean_blocks,
 )
 
-from src.etl.parser.regulation.regulation_parser import (
-    structure_regulations,
-)
 
+
+from src.etl.parser.module_description.module_description_parser import (
+    merge_module_blocks,
+    parse_module_descriptions,
+)
+from src.etl.parser.module_description.module_description_validator import (
+    print_validation_report,
+)
 
 def main():
 
@@ -88,118 +93,62 @@ def main():
         f"{len(cleaned_blocks)} blocks"
     )
 
-    # ========================================================
-    # 5. MAIN REGULATION STRUCTURE
-    # ========================================================
+    # ============================================================
+    # MODULE DESCRIPTION PARSING TEST
+    # ============================================================
 
-    regulations = structure_regulations(
-        blocks=cleaned_blocks,
-        toc=toc,
+    from src.etl.parser.module_description.module_description_parser import (
+        merge_module_blocks,
+        parse_module_descriptions,
     )
 
-    print(
-        "Main regulation parsing complete."
-    )
-
-    # ========================================================
-    # 6. DEBUG § 6 MODULE STRUCTURE
-    # ========================================================
-
-    print()
-    print("=" * 80)
-    print("§ 6 MODULE STRUCTURE")
+    print("\n" + "=" * 80)
+    print("MODULE DESCRIPTION PARSING")
     print("=" * 80)
 
-    section_6 = None
+    # ------------------------------------------------------------
+    # 1. Merge module blocks
+    # ------------------------------------------------------------
 
-    # --------------------------------------------------------
-    # Find § 6 inside the already structured regulation
-    # --------------------------------------------------------
-
-    for part in regulations["parts"]:
-
-        for regulation in part["regulations"]:
-
-            if regulation["paragraph"] == "§ 6":
-
-                section_6 = regulation
-                break
-
-        if section_6 is not None:
-            break
-
-    # --------------------------------------------------------
-    # § 6 not found
-    # --------------------------------------------------------
-
-    if section_6 is None:
-
-        print(
-            "ERROR: § 6 was not found."
-        )
-
-        return
-
-    # --------------------------------------------------------
-    # Basic information
-    # --------------------------------------------------------
+    merged_modules = merge_module_blocks(cleaned_blocks)
 
     print(
-        f"\n§ 6: {section_6['title']}"
+        f"Merged module descriptions: {len(merged_modules)}"
+    )
+
+    # ------------------------------------------------------------
+    # 2. Parse module descriptions
+    # ------------------------------------------------------------
+
+    module_descriptions = parse_module_descriptions(
+        merged_modules
     )
 
     print(
-        f"Original blocks: "
-        f"{len(section_6['blocks'])}"
+        f"Parsed module descriptions: "
+        f"{len(module_descriptions)}"
+    )
+
+    # ------------------------------------------------------------
+    # 3. Inspect parsed modules
+    # ------------------------------------------------------------
+
+    from src.etl.parser.module_description.module_description_validator import (
+    print_validation_report,
+    )
+
+    modules = parse_module_descriptions(
+    merged_modules
     )
 
     print(
-        f"Module sections: "
-        f"{len(section_6.get('module_sections', []))}"
+        f"Parsed module descriptions: {len(modules)}"
     )
 
-    # ========================================================
-    # 7. PRINT MODULE SECTIONS
-    # ========================================================
-
-    for section in section_6.get(
-        "module_sections",
-        []
-    ):
-
-        print()
-
-        print(
-            f"{section['number']}. "
-            f"{section['title']}"
-        )
-
-        print(
-            f"    Blocks: "
-            f"{len(section['blocks'])}"
-        )
-
-        print(
-            f"    Modules: "
-            f"{len(section['modules'])}"
-        )
-
-        # ----------------------------------------------------
-        # Print modules
-        # ----------------------------------------------------
-
-        for module in section["modules"]:
-
-            print(
-                f"      "
-                f"{module['module_code']} | "
-                f"{module['module_name']} | "
-                f"{module['credits']} LP | "
-                f"{module['type']} | "
-                f"Page {module['page_number']} | "
-                f"Block {module['block_index']}"
-            )
-
+    print_validation_report(
+        modules
+    )
 
 if __name__ == "__main__":
     main()
+

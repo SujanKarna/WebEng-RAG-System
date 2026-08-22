@@ -1,5 +1,6 @@
 """
 Regulation Parser
+
 =================
 
 Builds the hierarchical structure of the main study regulation.
@@ -14,17 +15,29 @@ Output
 ------
 
 Teil
+    ├── source
+    │
     └── §
+         ├── source
          ├── blocks
-         └── sections       # §6 only
+         └── module_sections       # §6 only
               └── modules
 
 The parser preserves and enriches the original cleaned block
 objects instead of creating new block dictionaries.
+
+Every Part and Regulation receives a SourceRange describing
+the physical location of its content in the source document.
 """
 
+
 import re
+
 from typing import Any
+
+from src.etl.models.source import (
+    create_source_range,
+)
 
 from src.etl.parser.regulation.section6_parser import (
     parse_section_6,
@@ -154,7 +167,10 @@ def build_toc_index(
 
     index: dict[str, dict[str, Any]] = {}
 
-    for part in toc.get("parts", []):
+    for part in toc.get(
+        "parts",
+        [],
+    ):
 
         part_name = part.get(
             "part",
@@ -205,13 +221,11 @@ def find_paragraph_number(
     Examples:
 
         § 1 Geltungsbereich
-
         § 5 Ziele des Studienganges
 
     Returns:
 
         § 1
-
         § 5
     """
 
@@ -275,6 +289,9 @@ def create_part(
 ) -> dict[str, Any]:
     """
     Create the Part structure.
+
+    Source is initially None and is calculated after
+    all blocks have been assigned.
     """
 
     return {
@@ -282,10 +299,14 @@ def create_part(
             "part",
             "",
         ),
+
         "title": part.get(
             "title",
             "",
         ),
+
+        "source": None,
+
         "regulations": [],
     }
 
@@ -302,9 +323,14 @@ def create_regulation(
 
     Every regulation keeps its original blocks.
 
+    Every regulation receives a source range after
+    blocks have been assigned.
+
     §6 additionally receives:
 
-        "sections": []
+        sections
+        module_sections
+        overall_blocks
     """
 
     result = {
@@ -312,19 +338,19 @@ def create_regulation(
             "paragraph",
             "",
         ),
+
         "title": regulation.get(
             "title",
             "",
         ),
+
+        "source": None,
+
         "blocks": [],
     }
 
     # --------------------------------------------------------
-    # §6 will later contain:
-    #
-    # sections
-    #   ├── category
-    #   └── modules
+    # §6 special structure
     # --------------------------------------------------------
 
     if regulation.get(
@@ -384,6 +410,120 @@ def annotate_block(
 
 
 # ============================================================
+# SOURCE RANGE
+# ============================================================
+
+def build_source_range(
+    blocks: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """
+    Build a SourceRange from a collection of blocks.
+
+    The range represents the physical start and end of the
+    content rather than storing provenance for every block.
+
+    Example:
+
+        {
+            "start_page": 5,
+            "end_page": 7,
+            "start_block": 2,
+            "end_block": 14,
+            "zone": "main_regulations"
+        }
+
+    Blocks are assumed to already be in document order.
+    """
+
+    if not blocks:
+        return None
+
+    start_block = blocks[0]
+    end_block = blocks[-1]
+
+    return create_source_range(
+        start_block=start_block,
+        end_block=end_block,
+    ).to_dict()
+
+
+# ============================================================
+# ATTACH REGULATION SOURCES
+# ============================================================
+
+def attach_regulation_sources(
+    result: dict[str, Any],
+) -> None:
+    """
+    Calculate SourceRange for every Part and every Regulation.
+
+    The source is calculated only after all blocks have been
+    assigned so that the range reflects the actual content.
+
+    Part source:
+        first block of first regulation
+        ->
+        last block of last regulation
+
+    Regulation source:
+        first block
+        ->
+        last block
+    """
+
+    for part in result.get(
+        "parts",
+        [],
+    ):
+
+        # ----------------------------------------------------
+        # Regulation sources
+        # ----------------------------------------------------
+
+        part_blocks: list[
+            dict[str, Any]
+        ] = []
+
+        for regulation in part.get(
+            "regulations",
+            [],
+        ):
+
+            regulation_blocks = regulation.get(
+                "blocks",
+                [],
+            )
+
+            # -----------------------------------------------
+            # Regulation source
+            # -----------------------------------------------
+
+            regulation["source"] = (
+                build_source_range(
+                    regulation_blocks
+                )
+            )
+
+            # -----------------------------------------------
+            # Collect blocks for Part source
+            # -----------------------------------------------
+
+            part_blocks.extend(
+                regulation_blocks
+            )
+
+        # ----------------------------------------------------
+        # Part source
+        # ----------------------------------------------------
+
+        part["source"] = (
+            build_source_range(
+                part_blocks
+            )
+        )
+
+
+# ============================================================
 # PARSE REGULATIONS
 # ============================================================
 
@@ -397,6 +537,9 @@ def parse_regulations(
 
     The original cleaned block objects are preserved and
     enriched with hierarchy metadata.
+
+    After assignment, SourceRange metadata is calculated
+    for every Part and every Regulation.
     """
 
     # ========================================================
@@ -425,7 +568,9 @@ def parse_regulations(
             [],
         ):
 
-            part_structure["regulations"].append(
+            part_structure[
+                "regulations"
+            ].append(
                 create_regulation(
                     regulation
                 )
@@ -495,14 +640,18 @@ def parse_regulations(
         # Detect paragraph heading
         # ----------------------------------------------------
 
-        paragraph_number = find_paragraph_number(
-            text
+        paragraph_number = (
+            find_paragraph_number(
+                text
+            )
         )
 
         if paragraph_number:
 
-            location = regulation_lookup.get(
-                paragraph_number
+            location = (
+                regulation_lookup.get(
+                    paragraph_number
+                )
             )
 
             if location is not None:
@@ -523,15 +672,7 @@ def parse_regulations(
             continue
 
         # ----------------------------------------------------
-        # IMPORTANT:
-        #
-        # Enrich the ORIGINAL block.
-        #
-        # We do NOT create:
-        #
-        #     new_block = {...}
-        #
-        # The same object from cleaned_blocks is used.
+        # Enrich ORIGINAL block
         # ----------------------------------------------------
 
         annotate_block(
@@ -541,7 +682,7 @@ def parse_regulations(
         )
 
         # ----------------------------------------------------
-        # Store the SAME block object
+        # Store SAME block object
         # ----------------------------------------------------
 
         current_regulation[
@@ -549,6 +690,14 @@ def parse_regulations(
         ].append(
             block
         )
+
+    # ========================================================
+    # ATTACH MAIN REGULATION SOURCES
+    # ========================================================
+
+    attach_regulation_sources(
+        result
+    )
 
     # ========================================================
     # §6 SPECIAL STRUCTURE
@@ -568,10 +717,6 @@ def parse_regulations(
 
             # ------------------------------------------------
             # Parse §6 using its already-enriched blocks.
-            #
-            # The section6 parser therefore receives exactly
-            # the same block objects that are stored inside
-            # regulation["blocks"].
             # ------------------------------------------------
 
             section_6 = parse_section_6(
@@ -584,28 +729,11 @@ def parse_regulations(
                 "sections"
             ]
 
-    # ========================================================
-    # Parse § 6 module structure
-    # ========================================================
-
-    for part in result["parts"]:
-
-        for regulation in part["regulations"]:
-
-            if regulation["paragraph"] != "§ 6":
-                continue
-
-            section_6 = parse_section_6(
-                regulation["blocks"]
-            )
-
-            regulation["module_sections"] = (
-                section_6["sections"]
-            )
-
-            regulation["overall_blocks"] = (
-                section_6["overall_blocks"]
-            )
+            regulation[
+                "overall_blocks"
+            ] = section_6[
+                "overall_blocks"
+            ]
 
             break
 

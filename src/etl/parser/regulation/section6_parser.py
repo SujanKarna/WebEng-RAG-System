@@ -9,7 +9,9 @@ The parser preserves the original cleaned blocks and their provenance.
 Expected structure:
 
 § 6
+
 ├── overall_blocks
+│
 ├── module_sections
 │   ├── 1. Grundlagenmodule
 │   ├── 2. Vertiefungsmodule
@@ -17,6 +19,7 @@ Expected structure:
 │   ├── 4. Modul Forschungsseminar
 │   ├── 5. Challengemodule
 │   └── 6. Modul Master-Arbeit
+│
 └── remaining_blocks
 
 Each module keeps:
@@ -35,11 +38,20 @@ and provenance:
     part_title
     paragraph
     paragraph_title
+
+and source location:
+
+    sources
+        └── main_regulation
 """
 
-
 import re
+
 from typing import Any
+
+from src.etl.models.source import (
+    create_source_range,
+)
 
 
 # ============================================================
@@ -50,7 +62,7 @@ MODULE_PATTERN = re.compile(
     r"(?P<code>\d{6}-\d{3})\s+"
     r"(?P<name>.+?),\s*"
     r"(?P<credits>\d+)\s*LP"
-    r"\s*\((?P<type>[^)]+)\)",
+    r"\s*\(?\s*(?P<type>[^)]+?)\s*\)?",
     re.IGNORECASE,
 )
 
@@ -74,10 +86,9 @@ SECTION_INLINE_PATTERN = re.compile(
 )
 
 
-# Matches section number embedded in text:
+# Matches:
 #
 # 1.
-# Grundlagenmodule:
 #
 # We intentionally search line-by-line.
 SECTION_NUMBER_ONLY_PATTERN = re.compile(
@@ -93,7 +104,7 @@ PARAGRAPH_PATTERN = re.compile(
 
 # Matches paragraph (2), (3), etc.
 PARAGRAPH_CONTENT_PATTERN = re.compile(
-    r"^\s*\((\d+)\)"
+    r"^\s*\(?(\d+)\)"
 )
 
 
@@ -165,14 +176,6 @@ def detect_section_at_lines(
             section_title,
             number_of_heading_lines
         )
-
-    Example:
-
-        ("1.", "Grundlagenmodule:")
-
-    becomes:
-
-        (1, "Grundlagenmodule", 2)
     """
 
     if start_index >= len(lines):
@@ -200,7 +203,6 @@ def detect_section_at_lines(
             start_index + 1
         ].strip()
 
-        # Do not treat arbitrary text as a section title.
         if not title_line:
             return None
 
@@ -304,6 +306,9 @@ def extract_modules_from_text(
     Extract all modules appearing in a block.
 
     A single block can contain many modules.
+
+    Every module receives a reusable SourceRange
+    describing its location inside the main regulation.
     """
 
     modules: list[dict[str, Any]] = []
@@ -312,8 +317,19 @@ def extract_modules_from_text(
         text
     ):
 
+        # ----------------------------------------------------
+        # Create main regulation source
+        # ----------------------------------------------------
+
+        main_regulation_source = (
+            create_source_range(
+                start_block=block
+            ).to_dict()
+        )
+
         modules.append(
             {
+
                 # --------------------------------------------
                 # Module information
                 # --------------------------------------------
@@ -341,7 +357,7 @@ def extract_modules_from_text(
                 ),
 
                 # --------------------------------------------
-                # Provenance
+                # Existing block provenance
                 # --------------------------------------------
 
                 "block_index": block.get(
@@ -375,6 +391,17 @@ def extract_modules_from_text(
                 "paragraph_title": block.get(
                     "paragraph_title"
                 ),
+
+                # --------------------------------------------
+                # Source locations
+                # --------------------------------------------
+
+                "sources": {
+
+                    "main_regulation":
+                        main_regulation_source
+
+                },
             }
         )
 
@@ -414,18 +441,27 @@ def parse_section_6(
     Important behavior:
 
     1. Original blocks are preserved.
+
     2. Section 1 can occur inside the §6 heading block.
+
     3. Sections can start in any line of a block.
+
     4. A block remains attached to the section it belongs to.
+
     5. "(2) Der empfohlene Ablauf..." is kept as a §6-level
        block and is NOT attached to section 6.
+
+    6. Every extracted module receives a reusable
+       main_regulation SourceRange.
     """
 
     sections: list[dict[str, Any]] = []
 
     current_section: dict[str, Any] | None = None
 
-    overall_blocks: list[dict[str, Any]] = []
+    overall_blocks: list[
+        dict[str, Any]
+    ] = []
 
     # --------------------------------------------------------
     # Process blocks in document order
@@ -451,7 +487,7 @@ def parse_section_6(
             continue
 
         # ----------------------------------------------------
-        # Detect all section headings in this block
+        # Detect section heading
         # ----------------------------------------------------
 
         section_start = find_section_in_block(
@@ -483,16 +519,24 @@ def parse_section_6(
             ) = section_start
 
             # -----------------------------------------------
-            # Create section if necessary
+            # Find existing section
             # -----------------------------------------------
 
             existing_section = None
 
             for section in sections:
 
-                if section["number"] == section_number:
+                if (
+                    section["number"]
+                    == section_number
+                ):
+
                     existing_section = section
                     break
+
+            # -----------------------------------------------
+            # Create section if necessary
+            # -----------------------------------------------
 
             if existing_section is None:
 
@@ -510,15 +554,17 @@ def parse_section_6(
                 current_section = existing_section
 
             # -----------------------------------------------
-            # Preserve the complete original block
+            # Preserve complete original block
             # -----------------------------------------------
 
-            current_section["blocks"].append(
+            current_section[
+                "blocks"
+            ].append(
                 block
             )
 
             # -----------------------------------------------
-            # Extract modules from complete block
+            # Extract modules
             # -----------------------------------------------
 
             modules = extract_modules_from_text(
@@ -526,7 +572,9 @@ def parse_section_6(
                 block,
             )
 
-            current_section["modules"].extend(
+            current_section[
+                "modules"
+            ].extend(
                 modules
             )
 
@@ -567,7 +615,9 @@ def parse_section_6(
 
             continue
 
-        current_section["blocks"].append(
+        current_section[
+            "blocks"
+        ].append(
             block
         )
 
@@ -576,7 +626,9 @@ def parse_section_6(
             block,
         )
 
-        current_section["modules"].extend(
+        current_section[
+            "modules"
+        ].extend(
             modules
         )
 
@@ -585,6 +637,10 @@ def parse_section_6(
     # ========================================================
 
     return {
+
         "sections": sections,
-        "overall_blocks": overall_blocks,
+
+        "overall_blocks":
+            overall_blocks,
+
     }
