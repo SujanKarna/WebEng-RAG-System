@@ -1,7 +1,7 @@
 from dataclasses import dataclass, asdict
 from typing import Optional, Any
 
-from src.etl.models.source import SourceRange
+from src.models.source import SourceRange
 
 
 @dataclass

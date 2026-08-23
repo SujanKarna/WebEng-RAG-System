@@ -20,8 +20,8 @@ The parser extracts structured fields from that merged text.
 import re
 from typing import Any
 
-from src.etl.models.module_description import ModuleDescription
-from src.etl.models.source import create_source_range
+from src.models.module_description import ModuleDescription
+from src.models.source import create_source_range
 
 
 # ============================================================

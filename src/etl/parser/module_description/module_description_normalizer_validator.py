@@ -17,10 +17,10 @@ The validator does not modify the data.
 import re
 from dataclasses import fields
 
-from src.etl.models.normalized_module_description import (
+from src.models.normalized_module_description import (
     NormalizedModuleDescription,
 )
-from src.etl.models.source import SourceRange
+from src.models.source import SourceRange
 
 # ============================================================
 # REQUIRED FIELDS

@@ -35,7 +35,7 @@ import re
 
 from typing import Any
 
-from src.etl.models.source import (
+from src.models.source import (
     create_source_range,
 )
 

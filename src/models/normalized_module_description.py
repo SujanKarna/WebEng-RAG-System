@@ -6,7 +6,7 @@ structured values derived from the textual fields.
 """
 
 from dataclasses import dataclass
-from src.etl.models.source import SourceRange
+from src.models.source import SourceRange
 
 @dataclass
 class NormalizedModuleDescription:

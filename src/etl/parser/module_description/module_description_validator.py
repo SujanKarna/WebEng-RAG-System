@@ -7,7 +7,7 @@ structural extraction problems without modifying the data.
 
 from dataclasses import fields
 import re
-from src.etl.models.module_description import ModuleDescription
+from src.models.module_description import ModuleDescription
 
 
 # ============================================================

@@ -3,6 +3,7 @@ from src.config.settings import (
     RAW_EXTRACTION_PATH,
     TOC_PATH,
     REGULATION_STRUCTURE_PATH,
+    CHUNKS_PATH
 )
 
 from src.etl.extract.pdf_extractor import (
@@ -51,6 +52,17 @@ from src.etl.parser.regulation.regulation_parser import (
 from src.etl.persistence.regulation_writer import (
     save_regulation_structure,
 )
+
+
+from src.chunking.regulation_chunker import (
+    chunk_regulation,
+)
+
+from src.etl.persistence.chunk_writer import (
+    save_chunks,
+)
+
+
 
 def main():
 
@@ -235,6 +247,36 @@ def main():
 
     print(
         "Regulation structure persisted."
+    )
+
+    # ========================================================
+    # 8. CHUNKING
+    # ========================================================
+
+    print("\n" + "=" * 80)
+    print("RAG CHUNKING")
+    print("=" * 80)
+
+    chunks = chunk_regulation(
+        regulation=regulations,
+    )
+
+    print(
+        f"Chunks created: "
+        f"{len(chunks)}"
+    )
+
+    # --------------------------------------------------------
+    # Persist chunks
+    # --------------------------------------------------------
+
+    save_chunks(
+        chunks=chunks,
+        output_path=CHUNKS_PATH,
+    )
+
+    print(
+        "RAG chunks persisted."
     )
 
 if __name__ == "__main__":

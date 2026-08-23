@@ -91,6 +91,21 @@ REGULATION_STRUCTURE_PATH = (
     / "web_engineering_2025_regulation.json"
 )
 
+CHUNKS_DIR = (
+    PROCESSED_DATA_DIR /
+    "chunks"
+)
+
+# ============================================================
+# RAG CHUNKING
+# ============================================================
+
+CHUNKS_PATH = (
+    PROCESSED_DATA_DIR
+    / "web_engineering_2025_chunks.jsonl"
+)
+
+
 # ---------------------------------------------------------
 # Directory helper
 # ---------------------------------------------------------

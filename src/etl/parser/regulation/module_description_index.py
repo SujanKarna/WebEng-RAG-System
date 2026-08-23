@@ -1,4 +1,4 @@
-from src.etl.models.normalized_module_description import (
+from src.models.normalized_module_description import (
     NormalizedModuleDescription,
 )
 

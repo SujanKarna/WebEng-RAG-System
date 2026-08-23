@@ -17,8 +17,8 @@ Responsibilities:
 import re
 from copy import deepcopy
 
-from src.etl.models.module_description import ModuleDescription
-from src.etl.models.normalized_module_description import (
+from src.models.module_description import ModuleDescription
+from src.models.normalized_module_description import (
     NormalizedModuleDescription,
 )
 

@@ -49,11 +49,11 @@ import re
 
 from typing import Any
 
-from src.etl.models.source import (
+from src.models.source import (
     create_source_range,
 )
 
-from src.etl.models.normalized_module_description import (
+from src.models.normalized_module_description import (
     NormalizedModuleDescription,
 )
 # ============================================================
