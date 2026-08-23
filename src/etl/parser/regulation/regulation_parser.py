@@ -1,6 +1,5 @@
 """
 Regulation Parser
-
 =================
 
 Builds the hierarchical structure of the main study regulation.
@@ -10,6 +9,7 @@ Input
 
 1. Cleaned blocks
 2. Structured TOC
+3. Optional module description index
 
 Output
 ------
@@ -22,6 +22,7 @@ Teil
          ├── blocks
          └── module_sections       # §6 only
               └── modules
+                   └── module_description
 
 The parser preserves and enriches the original cleaned block
 objects instead of creating new block dictionaries.
@@ -29,7 +30,6 @@ objects instead of creating new block dictionaries.
 Every Part and Regulation receives a SourceRange describing
 the physical location of its content in the source document.
 """
-
 
 import re
 
@@ -152,17 +152,6 @@ def build_toc_index(
 ) -> dict[str, dict[str, Any]]:
     """
     Convert the structured TOC into a lookup index.
-
-    Example:
-
-        {
-            "§ 1": {
-                "part": "Teil 1",
-                "part_title": "Allgemeine Bestimmungen",
-                "paragraph": "§ 1",
-                "title": "Geltungsbereich"
-            }
-        }
     """
 
     index: dict[str, dict[str, Any]] = {}
@@ -252,15 +241,6 @@ def remove_paragraph_heading(
 ) -> str:
     """
     Remove the § heading from the beginning of a block.
-
-    Example:
-
-        § 1 Geltungsbereich
-        Diese Studienordnung ...
-
-    becomes:
-
-        Diese Studienordnung ...
     """
 
     text = text.strip()
@@ -299,14 +279,11 @@ def create_part(
             "part",
             "",
         ),
-
         "title": part.get(
             "title",
             "",
         ),
-
         "source": None,
-
         "regulations": [],
     }
 
@@ -338,14 +315,11 @@ def create_regulation(
             "paragraph",
             "",
         ),
-
         "title": regulation.get(
             "title",
             "",
         ),
-
         "source": None,
-
         "blocks": [],
     }
 
@@ -375,23 +349,6 @@ def annotate_block(
     Enrich the ORIGINAL cleaned block.
 
     No copy is created.
-
-    Existing metadata such as:
-
-        block_index
-        page_index
-        page_number
-        zone
-        text
-
-    is preserved.
-
-    Additional hierarchy metadata is added:
-
-        part
-        part_title
-        paragraph
-        paragraph_title
     """
 
     block["part"] = part["part"]
@@ -418,27 +375,13 @@ def build_source_range(
 ) -> dict[str, Any] | None:
     """
     Build a SourceRange from a collection of blocks.
-
-    The range represents the physical start and end of the
-    content rather than storing provenance for every block.
-
-    Example:
-
-        {
-            "start_page": 5,
-            "end_page": 7,
-            "start_block": 2,
-            "end_block": 14,
-            "zone": "main_regulations"
-        }
-
-    Blocks are assumed to already be in document order.
     """
 
     if not blocks:
         return None
 
     start_block = blocks[0]
+
     end_block = blocks[-1]
 
     return create_source_range(
@@ -455,30 +398,13 @@ def attach_regulation_sources(
     result: dict[str, Any],
 ) -> None:
     """
-    Calculate SourceRange for every Part and every Regulation.
-
-    The source is calculated only after all blocks have been
-    assigned so that the range reflects the actual content.
-
-    Part source:
-        first block of first regulation
-        ->
-        last block of last regulation
-
-    Regulation source:
-        first block
-        ->
-        last block
+    Calculate SourceRange for every Part and Regulation.
     """
 
     for part in result.get(
         "parts",
         [],
     ):
-
-        # ----------------------------------------------------
-        # Regulation sources
-        # ----------------------------------------------------
 
         part_blocks: list[
             dict[str, Any]
@@ -489,9 +415,11 @@ def attach_regulation_sources(
             [],
         ):
 
-            regulation_blocks = regulation.get(
-                "blocks",
-                [],
+            regulation_blocks = (
+                regulation.get(
+                    "blocks",
+                    [],
+                )
             )
 
             # -----------------------------------------------
@@ -524,12 +452,180 @@ def attach_regulation_sources(
 
 
 # ============================================================
+# MODULE DESCRIPTION ENRICHMENT
+# ============================================================
+
+def enrich_section_6_modules(
+    section_6: dict[str, Any],
+    module_description_index: dict[str, Any],
+) -> tuple[int, int]:
+    """
+    Enrich §6 modules with their corresponding module
+    descriptions using the module code as the join key.
+
+    The module listed in §6 is the authoritative source for:
+
+        - module_code
+        - module_name
+        - credits
+        - type
+
+    The module-description index provides the detailed
+    module information.
+
+    Returns:
+        (
+            matched_count,
+            unmatched_count,
+        )
+    """
+
+    matched_count = 0
+    unmatched_count = 0
+
+    # --------------------------------------------------------
+    # Iterate through all §6 sections
+    # --------------------------------------------------------
+
+    for section in section_6.get(
+        "sections",
+        [],
+    ):
+
+        for module in section.get(
+            "modules",
+            [],
+        ):
+
+            module_code = module.get(
+                "module_code"
+            )
+
+            if not module_code:
+                unmatched_count += 1
+                continue
+
+            # ------------------------------------------------
+            # Lookup module description
+            # ------------------------------------------------
+
+            description = module_description_index.get(
+                module_code
+            )
+
+            if description is None:
+                unmatched_count += 1
+                continue
+
+
+            # ------------------------------------------------
+            # Convert normalized description to dictionary
+            # ------------------------------------------------
+
+            if hasattr(
+                description,
+                "to_dict",
+            ):
+                description_data = (
+                    description.to_dict()
+                )
+
+            elif isinstance(
+                description,
+                dict,
+            ):
+                description_data = description.copy()
+
+            else:
+                description_data = vars(
+                    description
+                ).copy()
+
+            # ------------------------------------------------
+            # Extract source before cleaning description
+            # ------------------------------------------------
+
+            description_source = (
+                description_data.pop(
+                    "source",
+                    None,
+                )
+            )
+
+            # ------------------------------------------------
+            # Remove fields already owned by §6 module
+            # ------------------------------------------------
+
+            description_data.pop(
+                "module_code",
+                None,
+            )
+
+            description_data.pop(
+                "module_name",
+                None,
+            )
+
+            description_data.pop(
+                "credits",
+                None,
+            )
+
+            # ------------------------------------------------
+            # Attach clean description
+            # ------------------------------------------------
+
+            module["description"] = (
+                description_data
+            )
+
+            # ------------------------------------------------
+            # Attach module-description source
+            # ------------------------------------------------
+
+            if description_source is not None:
+
+                if "sources" not in module:
+                    module["sources"] = {}
+
+                if hasattr(
+                    description_source,
+                    "to_dict",
+                ):
+                    module["sources"][
+                        "module_description"
+                    ] = description_source.to_dict()
+
+                elif isinstance(
+                    description_source,
+                    dict,
+                ):
+                    module["sources"][
+                        "module_description"
+                    ] = description_source
+
+                else:
+                    module["sources"][
+                        "module_description"
+                    ] = vars(
+                        description_source
+                    )
+
+            matched_count += 1
+
+    return (
+        matched_count,
+        unmatched_count,
+    )
+
+# ============================================================
 # PARSE REGULATIONS
 # ============================================================
 
 def parse_regulations(
     blocks: list[dict[str, Any]],
     toc: dict[str, Any],
+    module_description_index: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
     Assign cleaned main-regulation blocks to the correct
@@ -540,6 +636,9 @@ def parse_regulations(
 
     After assignment, SourceRange metadata is calculated
     for every Part and every Regulation.
+
+    If a module description index is provided, §6 modules
+    are enriched using module_code.
     """
 
     # ========================================================
@@ -669,6 +768,7 @@ def parse_regulations(
             current_part is None
             or current_regulation is None
         ):
+
             continue
 
         # ----------------------------------------------------
@@ -735,6 +835,27 @@ def parse_regulations(
                 "overall_blocks"
             ]
 
+            # ------------------------------------------------
+            # Enrich §6 modules their detailed
+            # module descriptions.
+            # ------------------------------------------------
+
+            if module_description_index is not None:
+
+                (
+                matched_count,
+                unmatched_count,
+            ) = enrich_section_6_modules(
+                section_6=section_6,
+                module_description_index=module_description_index,
+            )
+
+            print(
+                f"§6 module description enrichment: "
+                f"{matched_count} matched, "
+                f"{unmatched_count} unmatched"
+            )
+
             break
 
     return result
@@ -747,6 +868,7 @@ def parse_regulations(
 def structure_regulations(
     blocks: list[dict[str, Any]],
     toc: dict[str, Any],
+    module_description_index: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
     Public entry point.
@@ -757,4 +879,5 @@ def structure_regulations(
     return parse_regulations(
         blocks=blocks,
         toc=toc,
+        module_description_index=module_description_index,
     )

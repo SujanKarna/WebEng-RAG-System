@@ -6,7 +6,7 @@ structural extraction problems without modifying the data.
 """
 
 from dataclasses import fields
-
+import re
 from src.etl.models.module_description import ModuleDescription
 
 
@@ -22,26 +22,83 @@ REQUIRED_FIELDS = {
 
 
 # ============================================================
-# FIELD LABELS THAT SHOULD NEVER APPEAR INSIDE A VALUE
+# FIELD HEADINGS
+#
+# Each heading belongs to exactly one parsed field.
+#
+# A field is allowed to contain its own heading because the
+# parser may intentionally preserve the original section heading.
+# A heading belonging to another field indicates possible
+# extraction contamination.
 # ============================================================
 
-FIELD_LABELS = [
-    "Modulnummer",
-    "Modulname",
-    "Modulverantwortlich",
-    "Inhalte und Qualifikationsziele",
-    "Inhalte",
-    "Qualifikationsziele",
-    "Lehrformen",
-    "Voraussetzungen für die Teilnahme",
-    "Verwendbarkeit des Moduls",
-    "Voraussetzungen für die Vergabe von Leistungspunkten",
-    "Modulprüfung",
-    "Leistungspunkte und Noten",
-    "Häufigkeit des Angebots",
-    "Arbeitsaufwand",
-    "Dauer des Moduls",
-]
+FIELD_HEADINGS = {
+    "content": {
+        "Inhalte",
+    },
+    "qualification_goals": {
+        "Qualifikationsziele",
+    },
+    "teaching_forms": {
+        "Lehrformen",
+    },
+    "prerequisites": {
+        "Voraussetzungen für die Teilnahme",
+    },
+    "applicability": {
+        "Verwendbarkeit des Moduls",
+    },
+    "credit_requirements": {
+        "Voraussetzungen für die Vergabe von Leistungspunkten",
+    },
+    "examination": {
+        "Modulprüfung",
+    },
+    "credits_and_grades": {
+        "Leistungspunkte und Noten",
+    },
+    "frequency": {
+        "Häufigkeit des Angebots",
+    },
+    "workload": {
+        "Arbeitsaufwand",
+    },
+    "duration": {
+        "Dauer des Moduls",
+    },
+}
+
+
+
+def contains_structural_heading(
+    text: str,
+    heading: str,
+) -> bool:
+    """
+    Detect whether a field heading appears as a standalone
+    structural heading rather than merely being mentioned
+    inside normal prose.
+    """
+
+    pattern = rf"(?m)^\s*{re.escape(heading)}\s*:?\s*$"
+
+    return re.search(
+        pattern,
+        text,
+        flags=re.IGNORECASE,
+    ) is not None
+
+
+
+# ============================================================
+# REVERSE HEADING LOOKUP
+# ============================================================
+
+HEADING_TO_FIELD = {
+    heading: field_name
+    for field_name, headings in FIELD_HEADINGS.items()
+    for heading in headings
+}
 
 
 # ============================================================
@@ -73,20 +130,37 @@ def validate_module(
             )
 
     # --------------------------------------------------------
-    # Check suspicious field contamination
+    # Cross-field structural heading contamination
+    #
+    # We only report a heading when it appears as an actual
+    # standalone heading.
+    #
+    # Example that is VALID:
+    #
+    #   Die erfolgreiche Ablegung der Modulprüfung ist
+    #   Voraussetzung für die Vergabe von Leistungspunkten.
+    #
+    # Example that is INVALID:
+    #
+    #   Die erfolgreiche Ablegung der Modulprüfung ...
+    #
+    #   Modulprüfung
+    #   Die Modulprüfung besteht aus ...
     # --------------------------------------------------------
+
+    ignored_fields = {
+        "source",
+        "module_code",
+        "module_name",
+        "category",
+        "version",
+    }
 
     for field in fields(module):
 
         field_name = field.name
 
-        if field_name in {
-            "source",
-            "module_code",
-            "module_name",
-            "category",
-            "version",
-        }:
+        if field_name in ignored_fields:
             continue
 
         value = getattr(
@@ -100,36 +174,21 @@ def validate_module(
 
         value_text = str(value)
 
-        for label in FIELD_LABELS:
+        for heading, owner_field in HEADING_TO_FIELD.items():
 
-            if label.lower() in value_text.lower():
+            # A field is allowed to contain its own heading.
+            if owner_field == field_name:
+                continue
 
+            if contains_structural_heading(
+                value_text,
+                heading,
+            ):
                 problems.append(
-                    f"{field_name} contains field heading "
-                    f"'{label}'"
+                    f"{field_name} contains structural "
+                    f"heading '{heading}' belonging to "
+                    f"'{owner_field}'"
                 )
-
-    # --------------------------------------------------------
-    # Content checks
-    # --------------------------------------------------------
-
-    if module.content:
-
-        if "Qualifikationsziele" in module.content:
-
-            problems.append(
-                "content contains "
-                "'Qualifikationsziele'"
-            )
-
-    if module.qualification_goals:
-
-        if "Lehrformen" in module.qualification_goals:
-
-            problems.append(
-                "qualification_goals contains "
-                "'Lehrformen'"
-            )
 
     return problems
 

@@ -85,6 +85,12 @@ TOC_PATH = (
 )
 
 
+
+REGULATION_STRUCTURE_PATH = (
+    PROCESSED_DATA_DIR
+    / "web_engineering_2025_regulation.json"
+)
+
 # ---------------------------------------------------------
 # Directory helper
 # ---------------------------------------------------------

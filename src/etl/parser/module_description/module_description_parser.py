@@ -729,11 +729,6 @@ def parse_merged_module(
     raw_text = merged_block[
         "text"
     ]
-    print("\n" + "=" * 80)
-    print("RAW MERGED MODULE")
-    print("=" * 80)
-    print(raw_text)
-    print("=" * 80)
     # --------------------------------------------------------
     # Normalize text
     # --------------------------------------------------------

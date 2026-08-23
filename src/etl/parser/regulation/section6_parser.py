@@ -53,7 +53,9 @@ from src.etl.models.source import (
     create_source_range,
 )
 
-
+from src.etl.models.normalized_module_description import (
+    NormalizedModuleDescription,
+)
 # ============================================================
 # REGEX
 # ============================================================
@@ -301,6 +303,10 @@ def find_section_in_block(
 def extract_modules_from_text(
     text: str,
     block: dict[str, Any],
+    module_description_index: dict[
+        str,
+        NormalizedModuleDescription,
+    ] | None = None,
 ) -> list[dict[str, Any]]:
     """
     Extract all modules appearing in a block.
@@ -309,6 +315,10 @@ def extract_modules_from_text(
 
     Every module receives a reusable SourceRange
     describing its location inside the main regulation.
+
+    If a normalized module-description index is provided,
+    the detailed module description is attached using
+    the module code as the canonical key.
     """
 
     modules: list[dict[str, Any]] = []
@@ -316,6 +326,31 @@ def extract_modules_from_text(
     for match in MODULE_PATTERN.finditer(
         text
     ):
+
+        # ----------------------------------------------------
+        # Module code
+        # ----------------------------------------------------
+
+        module_code = match.group(
+            "code"
+        )
+
+        # ----------------------------------------------------
+        # Find normalized module description
+        # ----------------------------------------------------
+
+        module_description = None
+
+        if module_description_index is not None:
+
+            description = module_description_index.get(
+                module_code
+            )
+
+            if description is not None:
+                module_description = (
+                    description.to_dict()
+                )
 
         # ----------------------------------------------------
         # Create main regulation source
@@ -334,9 +369,7 @@ def extract_modules_from_text(
                 # Module information
                 # --------------------------------------------
 
-                "module_code": match.group(
-                    "code"
-                ),
+                "module_code": module_code,
 
                 "module_name": normalize_text(
                     match.group(
@@ -434,6 +467,10 @@ def create_section(
 
 def parse_section_6(
     blocks: list[dict[str, Any]],
+    module_description_index: dict[
+        str,
+        NormalizedModuleDescription,
+    ] | None = None,
 ) -> dict[str, Any]:
     """
     Parse cleaned §6 blocks.
@@ -570,6 +607,7 @@ def parse_section_6(
             modules = extract_modules_from_text(
                 text,
                 block,
+                module_description_index,
             )
 
             current_section[
@@ -624,6 +662,7 @@ def parse_section_6(
         modules = extract_modules_from_text(
             text,
             block,
+            module_description_index,
         )
 
         current_section[
