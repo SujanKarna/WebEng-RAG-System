@@ -63,6 +63,61 @@ def normalize_text(
 
 
 # ============================================================
+# DOCUMENT ARTIFACT DETECTION
+# ============================================================
+
+def is_document_artifact(
+    text: str,
+) -> bool:
+    """
+    Detect PDF header/footer artifacts that should not become
+    semantic RAG content.
+    """
+
+    normalized = " ".join(
+        text.split()
+    ).strip()
+
+    if not normalized:
+        return True
+
+    # --------------------------------------------------------
+    # Exact known footer/header artifacts
+    # --------------------------------------------------------
+
+    exact_artifacts = {
+        "Amtliche Bekanntmachungen",
+        "Nr. 48/2025",
+        "vom 19. Dezember 2025",
+        "_____________________________________",
+        "________________________________________",
+        "2072",
+        "2073",
+    }
+
+    if normalized in exact_artifacts:
+        return True
+
+    # --------------------------------------------------------
+    # Generic page-number-only blocks
+    # --------------------------------------------------------
+
+    if normalized.isdigit():
+        return True
+
+    # --------------------------------------------------------
+    # Footer separator
+    # --------------------------------------------------------
+
+    stripped = normalized.replace("_", "")
+
+    if not stripped:
+        return True
+
+    return False
+
+
+# ============================================================
 # SINGLE BLOCK CLEANING
 # ============================================================
 
@@ -101,6 +156,13 @@ def clean_block(
     text = normalize_text(text)
 
     if not text:
+        return None
+
+    # --------------------------------------------------------
+    # Remove document artifacts
+    # --------------------------------------------------------
+
+    if is_document_artifact(text):
         return None
 
     # --------------------------------------------------------

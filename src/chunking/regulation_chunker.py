@@ -1,120 +1,563 @@
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 import re
 
+from src.models.chunk import Chunk
+
 
 # ============================================================
-# CONFIGURATION
+# FOOTER / DOCUMENT ARTIFACT FILTERING
 # ============================================================
 
-# Maximum approximate character size for a regulation chunk.
-#
-# We deliberately use characters rather than tokens here.
-# Token-aware splitting can be introduced later if necessary.
-#
-# Most regulations will remain intact because they are already
-# semantically meaningful units.
-MAX_REGULATION_CHARS = 3500
-
-
-# Module fields that deserve independent retrieval chunks.
-#
-# These are intentionally semantic fields rather than arbitrary
-# text windows.
-MODULE_FIELDS = [
-    ("content", "Content"),
-    ("qualification_goals", "Qualification Goals"),
-    ("teaching_forms", "Teaching Forms"),
-    ("prerequisites", "Prerequisites"),
-    ("applicability", "Applicability"),
-    ("credit_requirements", "Credit Requirements"),
-    ("examination", "Examination"),
-    ("credits_and_grades", "Credits and Grades"),
-    ("frequency", "Frequency"),
-    ("workload", "Workload"),
-    ("duration", "Duration"),
+FOOTER_PATTERNS = [
+    r"^Amtliche Bekanntmachungen$",
+    r"^Nr\.\s*\d+/\d{4}$",
+    r"^vom\s+\d{1,2}\.\s+\w+\s+\d{4}$",
+    r"^[-_]{5,}$",
 ]
 
 
+def is_footer_or_artifact(text: Optional[str]) -> bool:
+    """
+    Return True if the block contains only known PDF
+    footer / publication artifacts.
+    """
+
+    if not text:
+        return True
+
+    normalized = " ".join(
+        text.strip().split()
+    )
+
+    if not normalized:
+        return True
+
+    for pattern in FOOTER_PATTERNS:
+        if re.fullmatch(
+            pattern,
+            normalized,
+            flags=re.IGNORECASE
+        ):
+            return True
+
+    return False
+
+
 # ============================================================
-# PUBLIC API
+# STRUCTURAL TRANSITION FILTERING
+# ============================================================
+
+def is_part_transition(
+    text: Optional[str],
+) -> bool:
+    """
+    Detect blocks which only introduce the next Teil/Part.
+
+    Example:
+
+        Teil 2
+        Aufbau und Inhalte des Studiums
+    """
+
+    if not text:
+        return False
+
+    normalized = " ".join(
+        text.strip().split()
+    )
+
+    return bool(
+        re.fullmatch(
+            r"Teil\s+\d+\s+.+",
+            normalized,
+            flags=re.IGNORECASE
+        )
+    )
+
+
+# ============================================================
+# TEXT CLEANING
+# ============================================================
+
+def clean_chunk_text(text: Optional[str]) -> str:
+    """
+    Normalize whitespace while preserving paragraph structure.
+    """
+
+    if not text:
+        return ""
+
+    # Normalize Windows line endings
+    text = text.replace("\r\n", "\n")
+    text = text.replace("\r", "\n")
+
+    # Remove excessive spaces around newlines
+    lines = []
+
+    for line in text.split("\n"):
+        line = line.strip()
+
+        if not line:
+            continue
+
+        lines.append(line)
+
+    return "\n".join(lines).strip()
+
+
+# ============================================================
+# CONTEXT BUILDERS
+# ============================================================
+
+def build_regulation_context(
+    part_name: Optional[str],
+    part_title: Optional[str],
+    paragraph: Optional[str],
+    paragraph_title: Optional[str],
+) -> Dict[str, Any]:
+
+    context: Dict[str, Any] = {}
+
+    if part_name is not None:
+        context["part"] = part_name
+
+    if part_title is not None:
+        context["part_title"] = part_title
+
+    if paragraph is not None:
+        context["paragraph"] = paragraph
+
+    if paragraph_title is not None:
+        context["paragraph_title"] = paragraph_title
+
+    return context
+
+
+def build_section_context(
+    part_name: Optional[str],
+    part_title: Optional[str],
+    paragraph: Optional[str],
+    paragraph_title: Optional[str],
+    section_number: Optional[Any],
+    section_title: Optional[str],
+) -> Dict[str, Any]:
+
+    context = build_regulation_context(
+        part_name=part_name,
+        part_title=part_title,
+        paragraph=paragraph,
+        paragraph_title=paragraph_title,
+    )
+
+    if section_number is not None:
+        context["section"] = section_number
+
+    if section_title is not None:
+        context["section_title"] = section_title
+
+    return context
+
+
+def build_module_context(
+    part_name: Optional[str],
+    part_title: Optional[str],
+    paragraph: Optional[str],
+    paragraph_title: Optional[str],
+    section_number: Optional[Any],
+    section_title: Optional[str],
+    module_code: Optional[str],
+    module_name: Optional[str],
+    module_type: Optional[str],
+    credits: Optional[Any],
+) -> Dict[str, Any]:
+
+    context = build_section_context(
+        part_name=part_name,
+        part_title=part_title,
+        paragraph=paragraph,
+        paragraph_title=paragraph_title,
+        section_number=section_number,
+        section_title=section_title,
+    )
+
+    if module_code is not None:
+        context["module_code"] = module_code
+
+    if module_name is not None:
+        context["module_name"] = module_name
+
+    if module_type is not None:
+        context["module_type"] = module_type
+
+    if credits is not None:
+        context["credits"] = credits
+
+    return context
+
+
+# ============================================================
+# CONTEXT-AWARE TEXT
+# ============================================================
+
+def add_regulation_context_to_text(
+    text: str,
+    part_name: Optional[str],
+    part_title: Optional[str],
+    paragraph: Optional[str],
+    paragraph_title: Optional[str],
+) -> str:
+
+    context_lines = []
+
+    if part_name and part_title:
+        context_lines.append(
+            f"Part {part_name}: {part_title}"
+        )
+    elif part_name:
+        context_lines.append(
+            f"Part {part_name}"
+        )
+
+    if paragraph and paragraph_title:
+        context_lines.append(
+            f"{paragraph} {paragraph_title}"
+        )
+    elif paragraph:
+        context_lines.append(
+            paragraph
+        )
+
+    context_text = "\n".join(context_lines)
+
+    if not context_text:
+        return text
+
+    return (
+        f"{context_text}\n\n"
+        f"{text}"
+    ).strip()
+
+
+def add_section_context_to_text(
+    text: str,
+    part_name: Optional[str],
+    part_title: Optional[str],
+    paragraph: Optional[str],
+    paragraph_title: Optional[str],
+    section_number: Optional[Any],
+    section_title: Optional[str],
+) -> str:
+
+    base_text = add_regulation_context_to_text(
+        text=text,
+        part_name=part_name,
+        part_title=part_title,
+        paragraph=paragraph,
+        paragraph_title=paragraph_title,
+    )
+
+    if section_number is not None and section_title:
+        section_context = (
+            f"Section: "
+            f"{section_number}. "
+            f"{section_title}"
+        )
+
+        return (
+            f"{base_text}\n\n"
+            f"{section_context}"
+        ).strip()
+
+    return base_text
+
+
+# ============================================================
+# MODULE TEXT
+# ============================================================
+
+def build_module_text(
+    module_code: Optional[str],
+    module_name: Optional[str],
+    section_title: Optional[str],
+    description: Dict[str, Any],
+) -> str:
+
+    parts: List[str] = []
+
+    # --------------------------------------------------------
+    # Module identity
+    # --------------------------------------------------------
+
+    if module_name and module_code:
+        parts.append(
+            f"Module: {module_name} "
+            f"({module_code})"
+        )
+
+    elif module_name:
+        parts.append(
+            f"Module: {module_name}"
+        )
+
+    elif module_code:
+        parts.append(
+            f"Module Code: {module_code}"
+        )
+
+    # --------------------------------------------------------
+    # Module category
+    # --------------------------------------------------------
+
+    if section_title:
+        parts.append(
+            f"Module Category: {section_title}"
+        )
+
+    # --------------------------------------------------------
+    # Description fields
+    # --------------------------------------------------------
+
+    fields = [
+        (
+            "Content",
+            "content",
+        ),
+        (
+            "Qualification Goals",
+            "qualification_goals",
+        ),
+        (
+            "Teaching Forms",
+            "teaching_forms",
+        ),
+        (
+            "Prerequisites",
+            "prerequisites",
+        ),
+        (
+            "Applicability",
+            "applicability",
+        ),
+        (
+            "Credit Requirements",
+            "credit_requirements",
+        ),
+        (
+            "Examination",
+            "examination",
+        ),
+        (
+            "Credits and Grades",
+            "credits_and_grades",
+        ),
+        (
+            "Frequency",
+            "frequency",
+        ),
+        (
+            "Workload",
+            "workload",
+        ),
+        (
+            "Duration",
+            "duration",
+        ),
+    ]
+
+    for label, key in fields:
+
+        value = description.get(key)
+
+        if value is None:
+            continue
+
+        if not isinstance(value, str):
+            value = str(value)
+
+        value = clean_chunk_text(value)
+
+        if not value:
+            continue
+
+        parts.append(
+            f"{label}:\n{value}"
+        )
+
+    return "\n\n".join(parts).strip()
+
+
+# ============================================================
+# MAIN CHUNKER
 # ============================================================
 
 def chunk_regulation(
     regulation: Dict[str, Any],
-) -> List[Dict[str, Any]]:
+) -> List[Chunk]:
     """
-    Convert the structured regulation JSON into semantic
-    RAG-ready chunks.
+    Convert the structured regulation JSON into canonical
+    RAG Chunk objects.
 
-    The TOC is intentionally NOT chunked.
+    Chunk types:
 
-    Chunk strategy
-    --------------
+        regulation
+        module_section
+        module_description
 
-    Regulation paragraphs:
-        - Small paragraphs remain intact.
-        - Large paragraphs are split semantically.
+    The chunker preserves:
 
-    Module sections:
-        - The module-selection information is chunked separately.
-        - PDF header/footer artifacts are removed.
+        Part
+        Paragraph
+        Section
+        Module
 
-    Module descriptions:
-        - Each meaningful module field becomes its own chunk.
-        - This improves retrieval for targeted questions such as:
-            "What are the prerequisites?"
-            "How is the module examined?"
-            "How many credits does it have?"
+    hierarchy through the `context` field.
 
-    Every chunk receives provenance metadata so that the final
-    RAG answer can cite the original regulation and page range.
+    Module-specific metadata is ONLY attached to
+    module_description chunks.
     """
 
-    chunks: List[Dict[str, Any]] = []
+    chunks: List[Chunk] = []
 
     chunk_index = 0
 
-    for part in regulation.get("parts", []):
+    # --------------------------------------------------------
+    # Document ID
+    # --------------------------------------------------------
+
+    document_id = regulation.get(
+        "document_id",
+        "tu_chemnitz_web_engineering_2025",
+    )
+
+    # ========================================================
+    # PARTS
+    # ========================================================
+
+    for part in regulation.get(
+        "parts",
+        [],
+    ):
 
         part_name = part.get("part")
         part_title = part.get("title")
+
+        # ====================================================
+        # REGULATIONS / PARAGRAPHS
+        # ====================================================
 
         for regulation_section in part.get(
             "regulations",
             [],
         ):
 
-            paragraph = regulation_section.get("paragraph")
-            paragraph_title = regulation_section.get("title")
+            paragraph = regulation_section.get(
+                "paragraph"
+            )
 
-            # ====================================================
-            # 1. REGULATION PARAGRAPH
-            # ====================================================
+            paragraph_title = regulation_section.get(
+                "title"
+            )
 
-            blocks = regulation_section.get(
+            # ==================================================
+            # NORMAL REGULATION BLOCKS
+            # ==================================================
+
+            for block in regulation_section.get(
                 "blocks",
                 [],
-            )
+            ):
 
-            regulation_chunks = _build_regulation_chunks(
-                blocks=blocks,
-                part_name=part_name,
-                part_title=part_title,
-                paragraph=paragraph,
-                paragraph_title=paragraph_title,
-            )
+                raw_text = block.get("text")
 
-            for chunk in regulation_chunks:
+                if not raw_text:
+                    continue
 
-                chunk["chunk_index"] = chunk_index
+                # Remove footer artifacts
+                if is_footer_or_artifact(
+                    raw_text
+                ):
+                    continue
+
+                # Remove pure Part transition blocks
+                if is_part_transition(
+                    raw_text
+                ):
+                    continue
+
+                text = clean_chunk_text(
+                    raw_text
+                )
+
+                if not text:
+                    continue
+
+                # ----------------------------------------------
+                # Context
+                # ----------------------------------------------
+
+                context = build_regulation_context(
+                    part_name=part_name,
+                    part_title=part_title,
+                    paragraph=paragraph,
+                    paragraph_title=paragraph_title,
+                )
+
+                # ----------------------------------------------
+                # Context-aware text
+                # ----------------------------------------------
+
+                text = add_regulation_context_to_text(
+                    text=text,
+                    part_name=part_name,
+                    part_title=part_title,
+                    paragraph=paragraph,
+                    paragraph_title=paragraph_title,
+                )
+
+                # ----------------------------------------------
+                # Create Chunk
+                # ----------------------------------------------
+
+                chunk = Chunk(
+                    chunk_id=(
+                        f"regulation_"
+                        f"{chunk_index:05d}"
+                    ),
+
+                    chunk_index=chunk_index,
+
+                    document_id=document_id,
+
+                    chunk_type="regulation",
+
+                    text=text,
+
+                    context=context,
+
+                    page_start=block.get(
+                        "page_number"
+                    ),
+
+                    page_end=block.get(
+                        "page_number"
+                    ),
+
+                    zone=block.get(
+                        "zone"
+                    ),
+
+                    block_index=block.get(
+                        "block_index"
+                    ),
+                )
 
                 chunks.append(chunk)
 
                 chunk_index += 1
 
-            # ====================================================
-            # 2. MODULE SECTIONS
-            # ====================================================
+            # ==================================================
+            # MODULE SECTIONS
+            # ==================================================
 
             for module_section in regulation_section.get(
                 "module_sections",
@@ -129,42 +572,42 @@ def chunk_regulation(
                     "title"
                 )
 
-                # ------------------------------------------------
-                # Module selection information
-                # ------------------------------------------------
+                # ==================================================
+                # MODULE SECTION BLOCKS
+                # ==================================================
 
-                module_section_chunks = _build_module_section_chunks(
-                    blocks=module_section.get(
-                        "blocks",
-                        [],
-                    ),
-                    part_name=part_name,
-                    part_title=part_title,
-                    paragraph=paragraph,
-                    paragraph_title=paragraph_title,
-                    section_number=section_number,
-                    section_title=section_title,
-                )
-
-                for chunk in module_section_chunks:
-
-                    chunk["chunk_index"] = chunk_index
-
-                    chunks.append(chunk)
-
-                    chunk_index += 1
-
-                # ------------------------------------------------
-                # Module descriptions
-                # ------------------------------------------------
-
-                for module in module_section.get(
-                    "modules",
+                for block in module_section.get(
+                    "blocks",
                     [],
                 ):
 
-                    module_chunks = _build_module_chunks(
-                        module=module,
+                    raw_text = block.get("text")
+
+                    if not raw_text:
+                        continue
+
+                    if is_footer_or_artifact(
+                        raw_text
+                    ):
+                        continue
+
+                    if is_part_transition(
+                        raw_text
+                    ):
+                        continue
+
+                    text = clean_chunk_text(
+                        raw_text
+                    )
+
+                    if not text:
+                        continue
+
+                    # ------------------------------------------
+                    # Context
+                    # ------------------------------------------
+
+                    context = build_section_context(
                         part_name=part_name,
                         part_title=part_title,
                         paragraph=paragraph,
@@ -173,783 +616,174 @@ def chunk_regulation(
                         section_title=section_title,
                     )
 
-                    for chunk in module_chunks:
+                    # ------------------------------------------
+                    # Context-aware text
+                    # ------------------------------------------
 
-                        chunk["chunk_index"] = chunk_index
+                    text = add_section_context_to_text(
+                        text=text,
+                        part_name=part_name,
+                        part_title=part_title,
+                        paragraph=paragraph,
+                        paragraph_title=paragraph_title,
+                        section_number=section_number,
+                        section_title=section_title,
+                    )
 
-                        chunks.append(chunk)
+                    # ------------------------------------------
+                    # Create Chunk
+                    # ------------------------------------------
 
-                        chunk_index += 1
+                    chunk = Chunk(
+                        chunk_id=(
+                            f"regulation_"
+                            f"{chunk_index:05d}"
+                        ),
 
-    return chunks
+                        chunk_index=chunk_index,
 
+                        document_id=document_id,
 
-# ============================================================
-# REGULATION CHUNKS
-# ============================================================
+                        chunk_type="module_section",
 
-def _build_regulation_chunks(
-    blocks: List[Dict[str, Any]],
-    part_name: str,
-    part_title: str,
-    paragraph: str,
-    paragraph_title: str,
-) -> List[Dict[str, Any]]:
-    """
-    Convert the blocks belonging to one regulation paragraph
-    into semantic chunks.
+                        text=text,
 
-    Important:
+                        context=context,
 
-    We do NOT create one chunk per PDF block.
+                        page_start=block.get(
+                            "page_number"
+                        ),
 
-    Instead, blocks are first cleaned and combined. This prevents
-    PDF layout boundaries from becoming artificial semantic
-    boundaries.
-    """
+                        page_end=block.get(
+                            "page_number"
+                        ),
 
-    valid_blocks = []
+                        zone=block.get(
+                            "zone"
+                        ),
 
-    for block in blocks:
+                        block_index=block.get(
+                            "block_index"
+                        ),
+                    )
 
-        text = _clean_pdf_artifacts(
-            block.get("text", "")
-        )
+                    chunks.append(chunk)
 
-        if not text:
-            continue
+                    chunk_index += 1
 
-        valid_blocks.append(
-            {
-                "text": text,
-                "page": block.get("page_number"),
-                "block_index": block.get("block_index"),
-                "zone": block.get("zone"),
-            }
-        )
+                # ==================================================
+                # MODULE DESCRIPTIONS
+                # ==================================================
 
-    if not valid_blocks:
-        return []
+                for module in module_section.get(
+                    "modules",
+                    [],
+                ):
 
-    # ------------------------------------------------------------
-    # Combine consecutive blocks.
-    # ------------------------------------------------------------
+                    module_code = module.get(
+                        "module_code"
+                    )
 
-    combined_text = "\n\n".join(
-        block["text"]
-        for block in valid_blocks
-    )
+                    module_name = module.get(
+                        "module_name"
+                    )
 
-    page_start = _first_page(valid_blocks)
-    page_end = _last_page(valid_blocks)
-
-    # ------------------------------------------------------------
-    # Small paragraph:
-    # keep the entire paragraph as one chunk.
-    # ------------------------------------------------------------
-
-    if len(combined_text) <= MAX_REGULATION_CHARS:
-
-        return [
-            {
-                "chunk_id": _paragraph_chunk_id(
-                    paragraph
-                ),
-
-                "chunk_type": "regulation",
-
-                "text": _make_regulation_header(
-                    paragraph=paragraph,
-                    paragraph_title=paragraph_title,
-                    text=combined_text,
-                ),
-
-                "metadata": {
-                    "part": part_name,
-                    "part_title": part_title,
-
-                    "paragraph": paragraph,
-                    "paragraph_title": paragraph_title,
-
-                    "page_start": page_start,
-                    "page_end": page_end,
-
-                    "zone": "main_regulations",
-
-                    "source_type": "regulation",
-                },
-            }
-        ]
-
-    # ------------------------------------------------------------
-    # Large paragraph:
-    # split semantically.
-    # ------------------------------------------------------------
-
-    semantic_parts = _split_large_regulation(
-        combined_text
-    )
-
-    chunks = []
-
-    for index, text in enumerate(
-        semantic_parts
-    ):
-
-        chunks.append(
-            {
-                "chunk_id": (
-                    f"{_paragraph_chunk_id(paragraph)}"
-                    f"_{index:02d}"
-                ),
-
-                "chunk_type": "regulation",
-
-                "text": _make_regulation_header(
-                    paragraph=paragraph,
-                    paragraph_title=paragraph_title,
-                    text=text,
-                ),
-
-                "metadata": {
-                    "part": part_name,
-                    "part_title": part_title,
-
-                    "paragraph": paragraph,
-                    "paragraph_title": paragraph_title,
-
-                    "page_start": page_start,
-                    "page_end": page_end,
-
-                    "zone": "main_regulations",
-
-                    "source_type": "regulation",
-
-                    "semantic_part": index,
-                },
-            }
-        )
-
-    return chunks
-
-
-# ============================================================
-# LARGE REGULATION SPLITTING
-# ============================================================
-
-def _split_large_regulation(
-    text: str,
-) -> List[str]:
-    """
-    Split a large regulation into meaningful units.
-
-    Priority:
-
-        1. numbered subsections: (1), (2), ...
-        2. numbered lists: 1., 2., ...
-        3. paragraph boundaries
-        4. character limit as final fallback
-    """
-
-    # ------------------------------------------------------------
-    # Split on German legal subsections.
-    #
-    # Example:
-    #
-    # (1) ...
-    # (2) ...
-    # (3) ...
-    # ------------------------------------------------------------
-
-    matches = list(
-        re.finditer(
-            r"(?m)(?=^\(\d+\))",
-            text,
-        )
-    )
-
-    if len(matches) > 1:
-
-        parts = []
-
-        for index, match in enumerate(matches):
-
-            start = match.start()
-
-            if index + 1 < len(matches):
-
-                end = matches[
-                    index + 1
-                ].start()
-
-            else:
-
-                end = len(text)
-
-            part = text[
-                start:end
-            ].strip()
-
-            if part:
-                parts.append(part)
-
-        if parts:
-
-            return _merge_small_parts(
-                parts
-            )
-
-    # ------------------------------------------------------------
-    # Fallback:
-    # split by paragraphs.
-    # ------------------------------------------------------------
-
-    paragraphs = [
-        part.strip()
-        for part in re.split(
-            r"\n\s*\n",
-            text,
-        )
-        if part.strip()
-    ]
-
-    if len(paragraphs) > 1:
-
-        return _merge_small_parts(
-            paragraphs
-        )
-
-    # ------------------------------------------------------------
-    # Final fallback:
-    # hard split by characters.
-    # ------------------------------------------------------------
-
-    return _hard_split(
-        text,
-        MAX_REGULATION_CHARS,
-    )
-
-
-def _merge_small_parts(
-    parts: List[str],
-) -> List[str]:
-    """
-    Merge small semantic parts so that we don't create
-    unnecessarily tiny chunks.
-    """
-
-    chunks = []
-
-    current = ""
-
-    for part in parts:
-
-        if not current:
-
-            current = part
-            continue
-
-        candidate = (
-            current
-            + "\n\n"
-            + part
-        )
-
-        if len(candidate) <= MAX_REGULATION_CHARS:
-
-            current = candidate
-
-        else:
-
-            chunks.append(current)
-
-            current = part
-
-    if current:
-        chunks.append(current)
-
-    return chunks
-
-
-def _hard_split(
-    text: str,
-    max_chars: int,
-) -> List[str]:
-    """
-    Last-resort character split.
-
-    Tries to split at sentence boundaries before falling
-    back to a hard character boundary.
-    """
-
-    chunks = []
-
-    remaining = text.strip()
-
-    while len(remaining) > max_chars:
-
-        candidate = remaining[
-            :max_chars
-        ]
-
-        # Prefer sentence boundary.
-        split_position = candidate.rfind(
-            ". "
-        )
-
-        # Then newline.
-        if split_position < max_chars * 0.5:
-
-            split_position = candidate.rfind(
-                "\n"
-            )
-
-        # Final fallback.
-        if split_position < max_chars * 0.5:
-
-            split_position = max_chars
-
-        chunk = remaining[
-            :split_position
-        ].strip()
-
-        if chunk:
-            chunks.append(chunk)
-
-        remaining = remaining[
-            split_position:
-        ].strip()
-
-    if remaining:
-        chunks.append(remaining)
-
-    return chunks
-
-
-# ============================================================
-# MODULE SECTION CHUNKS
-# ============================================================
-
-def _build_module_section_chunks(
-    blocks: List[Dict[str, Any]],
-    part_name: str,
-    part_title: str,
-    paragraph: str,
-    paragraph_title: str,
-    section_number: Any,
-    section_title: str,
-) -> List[Dict[str, Any]]:
-    """
-    Build chunks for the module-selection portion of §6.
-
-    Example:
-
-        Grundlagenmodule
-        Vertiefungsmodule
-        Module Schlüsselkompetenzen
-        Forschungsseminar
-        Challengemodule
-        Master-Arbeit
-
-    PDF headers and page numbers are removed.
-    """
-
-    valid_blocks = []
-
-    for block in blocks:
-
-        text = _clean_pdf_artifacts(
-            block.get("text", "")
-        )
-
-        if not text:
-            continue
-
-        valid_blocks.append(
-            {
-                "text": text,
-                "page": block.get("page_number"),
-                "block_index": block.get("block_index"),
-                "zone": block.get("zone"),
-            }
-        )
-
-    if not valid_blocks:
-        return []
-
-    text = "\n\n".join(
-        block["text"]
-        for block in valid_blocks
-    )
-
-    if not text.strip():
-        return []
-
-    return [
-        {
-            "chunk_id": (
-                "module_section_"
-                f"{section_number}"
-            ),
-
-            "chunk_type": "module_section",
-
-            "text": (
-                f"§ {paragraph.lstrip('§ ').strip()}"
-                f" – {section_title}\n\n"
-                f"{text}"
-            ),
-
-            "metadata": {
-                "part": part_name,
-                "part_title": part_title,
-
-                "paragraph": paragraph,
-                "paragraph_title": paragraph_title,
-
-                "section_number": section_number,
-                "section_title": section_title,
-
-                "page_start": _first_page(
-                    valid_blocks
-                ),
-
-                "page_end": _last_page(
-                    valid_blocks
-                ),
-
-                "zone": "main_regulations",
-
-                "source_type": "module_selection",
-            },
-        }
-    ]
-
-
-# ============================================================
-# MODULE DESCRIPTION CHUNKS
-# ============================================================
-
-def _build_module_chunks(
-    module: Dict[str, Any],
-    part_name: str,
-    part_title: str,
-    paragraph: str,
-    paragraph_title: str,
-    section_number: Any,
-    section_title: str,
-) -> List[Dict[str, Any]]:
-    """
-    Create semantic chunks from one module description.
-
-    Each meaningful module field becomes an independent retrieval
-    unit.
-
-    This is particularly useful for targeted student questions.
-    """
-
-    module_code = module.get(
-        "module_code"
-    )
-
-    module_name = module.get(
-        "module_name"
-    )
-
-    description = module.get(
-        "description"
-    )
-
-    if not description:
-        return []
-
-    sources = module.get(
-        "sources",
-        {}
-    )
-
-    module_source = sources.get(
-        "module_description",
-        {}
-    )
-
-    chunks = []
-
-    for field_name, field_title in MODULE_FIELDS:
-
-        value = description.get(
-            field_name
-        )
-
-        if not value:
-            continue
-
-        value = str(value).strip()
-
-        if not value:
-            continue
-
-        # --------------------------------------------------------
-        # Self-contained text.
-        #
-        # We repeat the module identity in every chunk because
-        # embeddings should understand what the field belongs to
-        # even when the chunk is retrieved independently.
-        # --------------------------------------------------------
-
-        text_parts = []
-
-        if module_name:
-
-            text_parts.append(
-                f"Module: {module_name}"
-            )
-
-        if module_code:
-
-            text_parts.append(
-                f"Module Code: {module_code}"
-            )
-
-        text_parts.append(
-            f"{field_title}:\n{value}"
-        )
-
-        module_text = "\n\n".join(
-            text_parts
-        )
-
-        chunk_id = (
-            f"module_{module_code}_"
-            f"{field_name}"
-        )
-
-        chunks.append(
-            {
-                "chunk_id": chunk_id,
-
-                "chunk_type": "module_field",
-
-                "text": module_text,
-
-                "metadata": {
-                    "part": part_name,
-                    "part_title": part_title,
-
-                    "paragraph": paragraph,
-                    "paragraph_title": paragraph_title,
-
-                    "section_number": section_number,
-                    "section_title": section_title,
-
-                    "module_code": module_code,
-                    "module_name": module_name,
-
-                    "field": field_name,
-
-                    "credits": module.get(
-                        "credits"
-                    ),
-
-                    "module_type": module.get(
+                    module_type = module.get(
                         "type"
-                    ),
+                    )
 
-                    "page_start": module_source.get(
-                        "start_page"
-                    ),
+                    credits = module.get(
+                        "credits"
+                    )
 
-                    "page_end": module_source.get(
-                        "end_page"
-                    ),
+                    description = module.get(
+                        "description",
+                        {}
+                    )
 
-                    "zone": module_source.get(
-                        "zone"
-                    ),
+                    if not description:
+                        continue
 
-                    "source_type": "module_description",
-                },
-            }
-        )
+                    # ----------------------------------------------
+                    # Module source / provenance
+                    # ----------------------------------------------
+
+                    sources = module.get(
+                        "sources",
+                        {}
+                    )
+
+                    module_source = sources.get(
+                        "module_description",
+                        {}
+                    )
+
+                    # ----------------------------------------------
+                    # Build module text
+                    # ----------------------------------------------
+
+                    module_text = build_module_text(
+                        module_code=module_code,
+                        module_name=module_name,
+                        section_title=section_title,
+                        description=description,
+                    )
+
+                    if not module_text:
+                        continue
+
+                    # ----------------------------------------------
+                    # Module context
+                    # ----------------------------------------------
+
+                    context = build_module_context(
+                        part_name=part_name,
+                        part_title=part_title,
+                        paragraph=paragraph,
+                        paragraph_title=paragraph_title,
+                        section_number=section_number,
+                        section_title=section_title,
+                        module_code=module_code,
+                        module_name=module_name,
+                        module_type=module_type,
+                        credits=credits,
+                    )
+
+                    # ----------------------------------------------
+                    # Create module chunk
+                    # ----------------------------------------------
+
+                    chunk = Chunk(
+                        chunk_id=(
+                            f"module_"
+                            f"{module_code}"
+                        ),
+
+                        chunk_index=chunk_index,
+
+                        document_id=document_id,
+
+                        chunk_type="module_description",
+
+                        text=module_text,
+
+                        context=context,
+
+                        page_start=module_source.get(
+                            "start_page"
+                        ),
+
+                        page_end=module_source.get(
+                            "end_page"
+                        ),
+
+                        zone=module_source.get(
+                            "zone"
+                        ),
+                    )
+
+                    chunks.append(chunk)
+
+                    chunk_index += 1
 
     return chunks
-
-
-# ============================================================
-# PDF ARTIFACT REMOVAL
-# ============================================================
-
-def _clean_pdf_artifacts(
-    text: str,
-) -> str:
-    """
-    Remove obvious PDF headers, footers and page-number artifacts.
-
-    This is intentionally conservative.
-
-    We do not perform aggressive linguistic cleaning here because
-    the regulation text itself must remain faithful to the source.
-    """
-
-    if not text:
-        return ""
-
-    lines = text.splitlines()
-
-    cleaned_lines = []
-
-    for line in lines:
-
-        normalized = line.strip()
-
-        if not normalized:
-            continue
-
-        # --------------------------------------------------------
-        # Official publication header.
-        # --------------------------------------------------------
-
-        if normalized == "Amtliche Bekanntmachungen":
-            continue
-
-        # --------------------------------------------------------
-        # Horizontal separator.
-        # --------------------------------------------------------
-
-        if re.fullmatch(
-            r"[_\-]{5,}",
-            normalized,
-        ):
-            continue
-
-        # --------------------------------------------------------
-        # Publication number.
-        # --------------------------------------------------------
-
-        if re.fullmatch(
-            r"Nr\.\s*\d+/\d{4}",
-            normalized,
-        ):
-            continue
-
-        # --------------------------------------------------------
-        # Publication date.
-        # --------------------------------------------------------
-
-        if re.fullmatch(
-            r"vom\s+\d{1,2}\.\s+\w+\s+\d{4}",
-            normalized,
-        ):
-            continue
-
-        # --------------------------------------------------------
-        # Standalone page numbers.
-        #
-        # We only remove pure numeric lines with a reasonable
-        # page-number shape.
-        # --------------------------------------------------------
-
-        if re.fullmatch(
-            r"\d{3,4}",
-            normalized,
-        ):
-            continue
-
-        cleaned_lines.append(
-            normalized
-        )
-
-    return "\n".join(
-        cleaned_lines
-    ).strip()
-
-
-# ============================================================
-# TEXT HELPERS
-# ============================================================
-
-def _make_regulation_header(
-    paragraph: str,
-    paragraph_title: str,
-    text: str,
-) -> str:
-    """
-    Make every regulation chunk self-contained.
-
-    This helps embeddings understand the context even when the
-    chunk is retrieved without neighbouring chunks.
-    """
-
-    header = []
-
-    if paragraph:
-        header.append(
-            paragraph
-        )
-
-    if paragraph_title:
-        header.append(
-            paragraph_title
-        )
-
-    if header:
-
-        return (
-            "\n".join(header)
-            + "\n\n"
-            + text
-        )
-
-    return text
-
-
-def _paragraph_chunk_id(
-    paragraph: str,
-) -> str:
-    """
-    Convert § 6 into a stable identifier.
-    """
-
-    if not paragraph:
-
-        return "regulation_unknown"
-
-    number = re.sub(
-        r"[^0-9A-Za-z]+",
-        "_",
-        paragraph,
-    ).strip("_")
-
-    return f"regulation_{number}"
-
-
-def _first_page(
-    blocks: List[Dict[str, Any]],
-):
-    """
-    Return the first available page number.
-    """
-
-    pages = [
-        block.get("page")
-        for block in blocks
-        if block.get("page") is not None
-    ]
-
-    return min(pages) if pages else None
-
-
-def _last_page(
-    blocks: List[Dict[str, Any]],
-):
-    """
-    Return the last available page number.
-    """
-
-    pages = [
-        block.get("page")
-        for block in blocks
-        if block.get("page") is not None
-    ]
-
-    return max(pages) if pages else None

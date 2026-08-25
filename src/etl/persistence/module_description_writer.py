@@ -1,16 +1,17 @@
 import json
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 
-class RegulationWriter:
+class ModuleDescriptionWriter:
 
     def __init__(self, output_path: Path):
         self.output_path = output_path
 
     def write(
         self,
-        paragraphs: list[dict[str, Any]],
+        modules: list[Any],
     ) -> None:
 
         self.output_path.parent.mkdir(
@@ -18,12 +19,18 @@ class RegulationWriter:
             exist_ok=True,
         )
 
+        data = [
+            asdict(module)
+            for module in modules
+        ]
+
         with self.output_path.open(
             "w",
             encoding="utf-8",
         ) as file:
+
             json.dump(
-                paragraphs,
+                data,
                 file,
                 ensure_ascii=False,
                 indent=2,

@@ -85,16 +85,52 @@ TOC_PATH = (
 )
 
 
-
-REGULATION_STRUCTURE_PATH = (
-    PROCESSED_DATA_DIR
-    / "web_engineering_2025_regulation.json"
-)
-
 CHUNKS_DIR = (
     PROCESSED_DATA_DIR /
     "chunks"
 )
+
+
+# ---------------------------------------------------------
+# Main regulation
+# ---------------------------------------------------------
+
+PARSED_MAIN_REGULATION_PATH = (
+    PROCESSED_DATA_DIR
+    / "parsed_main_regulation.json"
+)
+
+
+# ---------------------------------------------------------
+# Module descriptions
+# ---------------------------------------------------------
+
+PARSED_MODULE_DESCRIPTIONS_PATH = (
+    PROCESSED_DATA_DIR
+    / "parsed_module_descriptions.json"
+)
+
+NORMALIZED_MODULE_DESCRIPTIONS_PATH = (
+    PROCESSED_DATA_DIR
+    / "normalized_module_descriptions.json"
+)
+
+
+# ---------------------------------------------------------
+# Final regulation structure
+# ---------------------------------------------------------
+
+REGULATION_STRUCTURE_PATH = (
+    PROCESSED_DATA_DIR
+    / "regulation_structure.json"
+)
+
+
+NORMALIZED_MAIN_REGULATION_PATH = (
+    PROCESSED_DATA_DIR
+    / "normalized_main_regulation.json"
+)
+
 
 # ============================================================
 # RAG CHUNKING
@@ -104,6 +140,16 @@ CHUNKS_PATH = (
     PROCESSED_DATA_DIR
     / "web_engineering_2025_chunks.jsonl"
 )
+
+
+
+
+# ============================================================ 
+# COMBINED REGULATION 
+# ============================================================ 
+COMBINED_REGULATION_PATH = ( 
+    PROCESSED_DATA_DIR / "regulation" / "regulation_with_modules.json" 
+    )
 
 
 # ---------------------------------------------------------

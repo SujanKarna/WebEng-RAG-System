@@ -1,33 +1,31 @@
 from dataclasses import dataclass, asdict
-from typing import Optional
+from typing import Any, Dict, Optional
 import json
 
 
 @dataclass
 class Chunk:
+    """
+    Canonical RAG chunk representation.
+
+    Every chunk uses the same top-level schema.
+    Chunk-specific information is stored inside `context`.
+    """
+
     chunk_id: str
+    chunk_index: int
+    document_id: str
+
     chunk_type: str
     text: str
 
-    document_id: str
-
-    part: Optional[str] = None
-    part_title: Optional[str] = None
-
-    paragraph: Optional[str] = None
-    paragraph_title: Optional[str] = None
-
-    section: Optional[str] = None
-
-    module_code: Optional[str] = None
-    module_name: Optional[str] = None
-
-    field: Optional[str] = None
+    context: Dict[str, Any]
 
     page_start: Optional[int] = None
     page_end: Optional[int] = None
 
     zone: Optional[str] = None
+    block_index: Optional[int] = None
 
     def to_dict(self) -> dict:
         return asdict(self)

@@ -3,14 +3,26 @@ from pathlib import Path
 from typing import Any
 
 
-class RegulationWriter:
+class NormalizedMainRegulationWriter:
+    """
+    Persists the normalized main regulation.
 
-    def __init__(self, output_path: Path):
+    The normalized main regulation is produced by
+    MainRegulationNormalizer and contains the cleaned,
+    structured representation of the main regulation.
+
+    This writer performs no transformation.
+    """
+
+    def __init__(
+        self,
+        output_path: Path,
+    ):
         self.output_path = output_path
 
     def write(
         self,
-        paragraphs: list[dict[str, Any]],
+        regulation: list[dict[str, Any]],
     ) -> None:
 
         self.output_path.parent.mkdir(
@@ -22,8 +34,9 @@ class RegulationWriter:
             "w",
             encoding="utf-8",
         ) as file:
+
             json.dump(
-                paragraphs,
+                regulation,
                 file,
                 ensure_ascii=False,
                 indent=2,

@@ -1,20 +1,16 @@
 import json
 from pathlib import Path
-from typing import Dict, List
+from typing import List
+
+from src.models.chunk import Chunk
 
 
 def save_chunks(
-    chunks: List[Dict],
+    chunks: List[Chunk],
     output_path: Path,
 ) -> None:
     """
     Persist RAG chunks as JSONL.
-
-    One JSON object is stored per line.
-
-    JSONL is preferable to one huge JSON array because
-    vector databases and embedding pipelines can process
-    chunks incrementally.
     """
 
     output_path.parent.mkdir(
@@ -30,10 +26,7 @@ def save_chunks(
         for chunk in chunks:
 
             file.write(
-                json.dumps(
-                    chunk,
-                    ensure_ascii=False,
-                )
+                chunk.to_json()
                 + "\n"
             )
 

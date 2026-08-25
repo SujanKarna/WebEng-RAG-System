@@ -1,883 +1,357 @@
-"""
-Regulation Parser
-=================
-
-Builds the hierarchical structure of the main study regulation.
-
-Input
------
-
-1. Cleaned blocks
-2. Structured TOC
-3. Optional module description index
-
-Output
-------
-
-Teil
-    ├── source
-    │
-    └── §
-         ├── source
-         ├── blocks
-         └── module_sections       # §6 only
-              └── modules
-                   └── module_description
-
-The parser preserves and enriches the original cleaned block
-objects instead of creating new block dictionaries.
-
-Every Part and Regulation receives a SourceRange describing
-the physical location of its content in the source document.
-"""
-
 import re
-
 from typing import Any
 
-from src.models.source import (
-    create_source_range,
-)
 
-from src.etl.parser.regulation.section6_parser import (
-    parse_section_6,
-)
-
-
-# ============================================================
-# CONSTANTS
-# ============================================================
-
-MAIN_REGULATION_ZONE = "main_regulations"
-
-
-# ============================================================
-# REGEX
-# ============================================================
-
-PART_PATTERN = re.compile(
-    r"^\s*(Teil\s+\d+)\s*:?\s*(.*?)\s*$",
-    re.IGNORECASE,
-)
-
-PARAGRAPH_PATTERN = re.compile(
-    r"^\s*(§\s*\d+)\s*(.*?)\s*$"
-)
-
-PARAGRAPH_NUMBER_PATTERN = re.compile(
-    r"^(§\s*\d+)\b"
-)
-
-
-# ============================================================
-# TEXT HELPERS
-# ============================================================
-
-def normalize_text(
-    text: str,
-) -> str:
+class RegulationParser:
     """
-    Normalize whitespace while preserving the actual words.
-    """
+    Reconstruct the main regulation from cleaned_blocks.json.
 
-    return re.sub(
-        r"\s+",
-        " ",
-        text,
-    ).strip()
+    The cleaned blocks are already ordered according to the PDF.
 
-
-# ============================================================
-# PART / PARAGRAPH DETECTION
-# ============================================================
-
-def parse_part_heading(
-    text: str,
-) -> tuple[str, str] | None:
-    """
-    Parse:
-
-        Teil 1 Allgemeine Bestimmungen
-
-    Returns:
-
-        ("Teil 1", "Allgemeine Bestimmungen")
-    """
-
-    text = normalize_text(text)
-
-    match = PART_PATTERN.match(text)
-
-    if not match:
-        return None
-
-    return (
-        match.group(1),
-        match.group(2).strip(),
-    )
-
-
-def parse_paragraph_heading(
-    text: str,
-) -> tuple[str, str] | None:
-    """
-    Parse:
-
-        § 5 Ziele des Studienganges
-
-    Returns:
-
-        ("§ 5", "Ziele des Studienganges")
-    """
-
-    text = normalize_text(text)
-
-    match = PARAGRAPH_PATTERN.match(text)
-
-    if not match:
-        return None
-
-    return (
-        match.group(1),
-        match.group(2).strip(),
-    )
-
-
-# ============================================================
-# TOC INDEX
-# ============================================================
-
-def build_toc_index(
-    toc: dict[str, Any],
-) -> dict[str, dict[str, Any]]:
-    """
-    Convert the structured TOC into a lookup index.
-    """
-
-    index: dict[str, dict[str, Any]] = {}
-
-    for part in toc.get(
-        "parts",
-        [],
-    ):
-
-        part_name = part.get(
-            "part",
-            "",
-        )
-
-        part_title = part.get(
-            "title",
-            "",
-        )
-
-        for regulation in part.get(
-            "regulations",
-            [],
-        ):
-
-            paragraph = regulation.get(
-                "paragraph",
-                "",
-            )
-
-            if not paragraph:
-                continue
-
-            index[paragraph] = {
-                "part": part_name,
-                "part_title": part_title,
-                "paragraph": paragraph,
-                "title": regulation.get(
-                    "title",
-                    "",
-                ),
-            }
-
-    return index
-
-
-# ============================================================
-# FIND PARAGRAPH
-# ============================================================
-
-def find_paragraph_number(
-    text: str,
-) -> str | None:
-    """
-    Find a paragraph marker at the beginning of a block.
-
-    Examples:
+    The parser reconstructs the regulation into paragraph-level
+    objects such as:
 
         § 1 Geltungsbereich
-        § 5 Ziele des Studienganges
+        § 2 Studienbeginn und Regelstudienzeit
+        ...
+        § 11 Inkrafttreten ...
 
-    Returns:
-
-        § 1
-        § 5
+    Headers, footers and page numbers are excluded.
     """
 
-    text = normalize_text(text)
+    # ========================================================
+    # PATTERNS
+    # ========================================================
 
-    match = PARAGRAPH_NUMBER_PATTERN.match(
-        text
+    PART_PATTERN = re.compile(
+        r"^Teil\s+(\d+)\s+(.+)$",
+        re.IGNORECASE,
     )
 
-    if not match:
-        return None
+    PARAGRAPH_PATTERN = re.compile(
+        r"^§\s*(\d+)\s+(.+?)(?:\n|$)",
+        re.DOTALL,
+    )
 
-    return normalize_text(
-        match.group(1)
+    HEADER_PATTERN = re.compile(
+        r"^Amtliche Bekanntmachungen\b",
+        re.IGNORECASE,
+    )
+
+    ISSUE_PATTERN = re.compile(
+        r"^Nr\.\s*\d+/\d+",
+        re.IGNORECASE,
+    )
+
+    DATE_PATTERN = re.compile(
+        r"^vom\s+\d{1,2}\.\s+\w+\s+\d{4}",
+        re.IGNORECASE,
+    )
+
+    PAGE_NUMBER_PATTERN = re.compile(
+        r"^\d{3,4}$"
     )
 
 
-# ============================================================
-# PARAGRAPH TEXT
-# ============================================================
-
-def remove_paragraph_heading(
-    text: str,
-) -> str:
-    """
-    Remove the § heading from the beginning of a block.
-    """
-
-    text = text.strip()
-
-    match = re.match(
-        r"^§\s*\d+\s+[^\n]+",
-        text,
-    )
-
-    if not match:
-        return text
-
-    remainder = text[
-        match.end():
-    ]
-
-    return remainder.strip()
-
-
-# ============================================================
-# CREATE PART STRUCTURE
-# ============================================================
-
-def create_part(
-    part: dict[str, Any],
-) -> dict[str, Any]:
-    """
-    Create the Part structure.
-
-    Source is initially None and is calculated after
-    all blocks have been assigned.
-    """
-
-    return {
-        "part": part.get(
-            "part",
-            "",
-        ),
-        "title": part.get(
-            "title",
-            "",
-        ),
-        "source": None,
-        "regulations": [],
-    }
-
-
-# ============================================================
-# CREATE REGULATION STRUCTURE
-# ============================================================
-
-def create_regulation(
-    regulation: dict[str, Any],
-) -> dict[str, Any]:
-    """
-    Create the regulation structure.
-
-    Every regulation keeps its original blocks.
-
-    Every regulation receives a source range after
-    blocks have been assigned.
-
-    §6 additionally receives:
-
-        sections
-        module_sections
-        overall_blocks
-    """
-
-    result = {
-        "paragraph": regulation.get(
-            "paragraph",
-            "",
-        ),
-        "title": regulation.get(
-            "title",
-            "",
-        ),
-        "source": None,
-        "blocks": [],
-    }
-
-    # --------------------------------------------------------
-    # §6 special structure
-    # --------------------------------------------------------
-
-    if regulation.get(
-        "paragraph"
-    ) == "§ 6":
-
-        result["sections"] = []
-
-    return result
-
-
-# ============================================================
-# ANNOTATE BLOCK
-# ============================================================
-
-def annotate_block(
-    block: dict[str, Any],
-    part: dict[str, Any],
-    regulation: dict[str, Any],
-) -> dict[str, Any]:
-    """
-    Enrich the ORIGINAL cleaned block.
-
-    No copy is created.
-    """
-
-    block["part"] = part["part"]
-
-    block["part_title"] = part["title"]
-
-    block["paragraph"] = (
-        regulation["paragraph"]
-    )
-
-    block["paragraph_title"] = (
-        regulation["title"]
-    )
-
-    return block
-
-
-# ============================================================
-# SOURCE RANGE
-# ============================================================
-
-def build_source_range(
-    blocks: list[dict[str, Any]],
-) -> dict[str, Any] | None:
-    """
-    Build a SourceRange from a collection of blocks.
-    """
-
-    if not blocks:
-        return None
-
-    start_block = blocks[0]
-
-    end_block = blocks[-1]
-
-    return create_source_range(
-        start_block=start_block,
-        end_block=end_block,
-    ).to_dict()
-
-
-# ============================================================
-# ATTACH REGULATION SOURCES
-# ============================================================
-
-def attach_regulation_sources(
-    result: dict[str, Any],
-) -> None:
-    """
-    Calculate SourceRange for every Part and Regulation.
-    """
-
-    for part in result.get(
-        "parts",
-        [],
-    ):
-
-        part_blocks: list[
-            dict[str, Any]
-        ] = []
-
-        for regulation in part.get(
-            "regulations",
-            [],
-        ):
-
-            regulation_blocks = (
-                regulation.get(
-                    "blocks",
-                    [],
-                )
-            )
-
-            # -----------------------------------------------
-            # Regulation source
-            # -----------------------------------------------
-
-            regulation["source"] = (
-                build_source_range(
-                    regulation_blocks
-                )
-            )
-
-            # -----------------------------------------------
-            # Collect blocks for Part source
-            # -----------------------------------------------
-
-            part_blocks.extend(
-                regulation_blocks
-            )
-
-        # ----------------------------------------------------
-        # Part source
-        # ----------------------------------------------------
-
-        part["source"] = (
-            build_source_range(
-                part_blocks
-            )
-        )
-
-
-# ============================================================
-# MODULE DESCRIPTION ENRICHMENT
-# ============================================================
-
-def enrich_section_6_modules(
-    section_6: dict[str, Any],
-    module_description_index: dict[str, Any],
-) -> tuple[int, int]:
-    """
-    Enrich §6 modules with their corresponding module
-    descriptions using the module code as the join key.
-
-    The module listed in §6 is the authoritative source for:
-
-        - module_code
-        - module_name
-        - credits
-        - type
-
-    The module-description index provides the detailed
-    module information.
-
-    Returns:
-        (
-            matched_count,
-            unmatched_count,
-        )
-    """
-
-    matched_count = 0
-    unmatched_count = 0
-
-    # --------------------------------------------------------
-    # Iterate through all §6 sections
-    # --------------------------------------------------------
-
-    for section in section_6.get(
-        "sections",
-        [],
-    ):
-
-        for module in section.get(
-            "modules",
-            [],
-        ):
-
-            module_code = module.get(
-                "module_code"
-            )
-
-            if not module_code:
-                unmatched_count += 1
+    
+    PARAGRAPH_TITLES = {
+    "1": "Geltungsbereich",
+    "2": "Studienbeginn und Regelstudienzeit",
+    "3": "Zugangsvoraussetzungen",
+    "4": "Lehr- und Lernformen",
+    "5": "Ziele des Studienganges",
+    "6": "Aufbau des Studiums",
+    "7": "Inhalte des Studiums",
+    "8": "Studienberatung",
+    "9": "Prüfungen",
+    "10": "Fern- und Teilzeitstudium",
+    "11": "Inkrafttreten und Veröffentlichung, Übergangsregelung",
+}
+
+
+    # ========================================================
+    # INITIALIZATION
+    # ========================================================
+
+    def __init__(
+        self,
+        blocks: list[dict[str, Any]],
+    ) -> None:
+
+        self.blocks = blocks
+
+    # ========================================================
+    # PUBLIC API
+    # ========================================================
+
+    def parse(self) -> list[dict[str, Any]]:
+        """
+        Reconstruct regulation paragraphs.
+        """
+
+        paragraphs: list[dict[str, Any]] = []
+
+        current_part: dict[str, str] | None = None
+        current_paragraph: dict[str, Any] | None = None
+
+        for block in self.blocks:
+
+            # ------------------------------------------------
+            # Only process main regulation
+            # ------------------------------------------------
+
+            if block.get("zone") != "main_regulations":
+                continue
+
+            text = block.get("text", "").strip()
+
+            if not text:
                 continue
 
             # ------------------------------------------------
-            # Lookup module description
+            # Remove headers / footers
             # ------------------------------------------------
 
-            description = module_description_index.get(
-                module_code
-            )
-
-            if description is None:
-                unmatched_count += 1
+            if self._is_page_furniture(text):
                 continue
 
-
             # ------------------------------------------------
-            # Convert normalized description to dictionary
-            # ------------------------------------------------
-
-            if hasattr(
-                description,
-                "to_dict",
-            ):
-                description_data = (
-                    description.to_dict()
-                )
-
-            elif isinstance(
-                description,
-                dict,
-            ):
-                description_data = description.copy()
-
-            else:
-                description_data = vars(
-                    description
-                ).copy()
-
-            # ------------------------------------------------
-            # Extract source before cleaning description
+            # Detect Part
             # ------------------------------------------------
 
-            description_source = (
-                description_data.pop(
-                    "source",
-                    None,
-                )
-            )
+            part = self._parse_part(text)
+
+            if part is not None:
+
+                current_part = part
+
+                continue
 
             # ------------------------------------------------
-            # Remove fields already owned by §6 module
+            # Detect paragraph
             # ------------------------------------------------
 
-            description_data.pop(
-                "module_code",
-                None,
-            )
+            paragraph = self._parse_paragraph(text)
 
-            description_data.pop(
-                "module_name",
-                None,
-            )
+            if paragraph is not None:
 
-            description_data.pop(
-                "credits",
-                None,
-            )
+                # Finish previous paragraph
+                if current_paragraph is not None:
 
-            # ------------------------------------------------
-            # Attach clean description
-            # ------------------------------------------------
-
-            module["description"] = (
-                description_data
-            )
-
-            # ------------------------------------------------
-            # Attach module-description source
-            # ------------------------------------------------
-
-            if description_source is not None:
-
-                if "sources" not in module:
-                    module["sources"] = {}
-
-                if hasattr(
-                    description_source,
-                    "to_dict",
-                ):
-                    module["sources"][
-                        "module_description"
-                    ] = description_source.to_dict()
-
-                elif isinstance(
-                    description_source,
-                    dict,
-                ):
-                    module["sources"][
-                        "module_description"
-                    ] = description_source
-
-                else:
-                    module["sources"][
-                        "module_description"
-                    ] = vars(
-                        description_source
+                    paragraphs.append(
+                        self._finalize_paragraph(
+                            current_paragraph
+                        )
                     )
 
-            matched_count += 1
+                # Create new paragraph
+                current_paragraph = {
+                    "paragraph": paragraph["paragraph"],
+                    "paragraph_title": paragraph["title"],
+                    "part": current_part,
+                    "blocks": [],
+                }
 
-    return (
-        matched_count,
-        unmatched_count,
-    )
+                # Add body contained in the same block
+                if paragraph["body"]:
 
-# ============================================================
-# PARSE REGULATIONS
-# ============================================================
-
-def parse_regulations(
-    blocks: list[dict[str, Any]],
-    toc: dict[str, Any],
-    module_description_index: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """
-    Assign cleaned main-regulation blocks to the correct
-    Teil and § using the TOC.
-
-    The original cleaned block objects are preserved and
-    enriched with hierarchy metadata.
-
-    After assignment, SourceRange metadata is calculated
-    for every Part and every Regulation.
-
-    If a module description index is provided, §6 modules
-    are enriched using module_code.
-    """
-
-    # ========================================================
-    # CREATE OUTPUT STRUCTURE FROM TOC
-    # ========================================================
-
-    result: dict[str, Any] = {
-        "parts": []
-    }
-
-    for part in toc.get(
-        "parts",
-        [],
-    ):
-
-        part_structure = create_part(
-            part
-        )
-
-        result["parts"].append(
-            part_structure
-        )
-
-        for regulation in part.get(
-            "regulations",
-            [],
-        ):
-
-            part_structure[
-                "regulations"
-            ].append(
-                create_regulation(
-                    regulation
-                )
-            )
-
-    # ========================================================
-    # REGULATION LOOKUP
-    # ========================================================
-
-    regulation_lookup: dict[
-        str,
-        tuple[
-            dict[str, Any],
-            dict[str, Any],
-        ],
-    ] = {}
-
-    for part in result["parts"]:
-
-        for regulation in part[
-            "regulations"
-        ]:
-
-            regulation_lookup[
-                regulation["paragraph"]
-            ] = (
-                part,
-                regulation,
-            )
-
-    # ========================================================
-    # CURRENT LOCATION
-    # ========================================================
-
-    current_part: dict[str, Any] | None = None
-
-    current_regulation: dict[
-        str,
-        Any,
-    ] | None = None
-
-    # ========================================================
-    # PROCESS BLOCKS IN DOCUMENT ORDER
-    # ========================================================
-
-    for block in blocks:
-
-        # ----------------------------------------------------
-        # Only main regulation
-        # ----------------------------------------------------
-
-        if block.get(
-            "zone"
-        ) != MAIN_REGULATION_ZONE:
-
-            continue
-
-        text = block.get(
-            "text",
-            "",
-        ).strip()
-
-        if not text:
-            continue
-
-        # ----------------------------------------------------
-        # Detect paragraph heading
-        # ----------------------------------------------------
-
-        paragraph_number = (
-            find_paragraph_number(
-                text
-            )
-        )
-
-        if paragraph_number:
-
-            location = (
-                regulation_lookup.get(
-                    paragraph_number
-                )
-            )
-
-            if location is not None:
-
-                (
-                    current_part,
-                    current_regulation,
-                ) = location
-
-        # ----------------------------------------------------
-        # Ignore blocks before first known paragraph
-        # ----------------------------------------------------
-
-        if (
-            current_part is None
-            or current_regulation is None
-        ):
-
-            continue
-
-        # ----------------------------------------------------
-        # Enrich ORIGINAL block
-        # ----------------------------------------------------
-
-        annotate_block(
-            block=block,
-            part=current_part,
-            regulation=current_regulation,
-        )
-
-        # ----------------------------------------------------
-        # Store SAME block object
-        # ----------------------------------------------------
-
-        current_regulation[
-            "blocks"
-        ].append(
-            block
-        )
-
-    # ========================================================
-    # ATTACH MAIN REGULATION SOURCES
-    # ========================================================
-
-    attach_regulation_sources(
-        result
-    )
-
-    # ========================================================
-    # §6 SPECIAL STRUCTURE
-    # ========================================================
-
-    for part in result["parts"]:
-
-        for regulation in part[
-            "regulations"
-        ]:
-
-            if regulation[
-                "paragraph"
-            ] != "§ 6":
+                    self._append_block(
+                        current_paragraph,
+                        block,
+                        paragraph["body"],
+                    )
 
                 continue
 
             # ------------------------------------------------
-            # Parse §6 using its already-enriched blocks.
+            # Normal continuation block
             # ------------------------------------------------
 
-            section_6 = parse_section_6(
-                regulation["blocks"]
+            if current_paragraph is not None:
+
+                self._append_block(
+                    current_paragraph,
+                    block,
+                    text,
+                )
+
+        # ----------------------------------------------------
+        # Finish final paragraph
+        # ----------------------------------------------------
+
+        if current_paragraph is not None:
+
+            paragraphs.append(
+                self._finalize_paragraph(
+                    current_paragraph
+                )
             )
 
-            regulation[
-                "module_sections"
-            ] = section_6[
-                "sections"
+        return paragraphs
+
+    # ========================================================
+    # PAGE FURNITURE
+    # ========================================================
+
+    def _is_page_furniture(
+        self,
+        text: str,
+    ) -> bool:
+
+        if self.HEADER_PATTERN.match(text):
+            return True
+
+        if self.ISSUE_PATTERN.match(text):
+            return True
+
+        if self.DATE_PATTERN.match(text):
+            return True
+
+        if self.PAGE_NUMBER_PATTERN.fullmatch(text):
+            return True
+
+        return False
+
+    # ========================================================
+    # PART PARSER
+    # ========================================================
+
+    def _parse_part(
+        self,
+        text: str,
+    ) -> dict[str, str] | None:
+
+        match = self.PART_PATTERN.match(text)
+
+        if match is None:
+            return None
+
+        return {
+            "part": f"Teil {match.group(1)}",
+            "part_title": match.group(2).strip(),
+        }
+
+    # ========================================================
+    # PARAGRAPH PARSER
+    # ========================================================
+
+    def _parse_paragraph(
+    self,
+    text: str,
+) -> dict[str, str] | None:
+
+        match = re.match(
+            r"^§\s*(\d+)\s+(.+)$",
+            text,
+            re.DOTALL,
+        )
+
+        if match is None:
+            return None
+
+        number = match.group(1)
+        remainder = match.group(2).strip()
+
+        expected_title = self.PARAGRAPH_TITLES.get(number)
+
+        # --------------------------------------------------------
+        # If we know the title, use it directly.
+        # --------------------------------------------------------
+
+        if expected_title is not None:
+
+            if remainder.startswith(expected_title):
+
+                body = remainder[
+                    len(expected_title):
+                ].strip()
+
+                return {
+                    "paragraph": f"§ {number}",
+                    "title": expected_title,
+                    "body": body,
+                }
+
+        # --------------------------------------------------------
+        # Generic fallback
+        # --------------------------------------------------------
+
+        if "\n" in remainder:
+
+            lines = [
+                line.strip()
+                for line in remainder.splitlines()
+                if line.strip()
             ]
 
-            regulation[
-                "overall_blocks"
-            ] = section_6[
-                "overall_blocks"
-            ]
+            title = lines[0]
 
-            # ------------------------------------------------
-            # Enrich §6 modules their detailed
-            # module descriptions.
-            # ------------------------------------------------
+            body = "\n".join(lines[1:])
 
-            if module_description_index is not None:
+            return {
+                "paragraph": f"§ {number}",
+                "title": title,
+                "body": body,
+            }
 
-                (
-                matched_count,
-                unmatched_count,
-            ) = enrich_section_6_modules(
-                section_6=section_6,
-                module_description_index=module_description_index,
-            )
+        return {
+            "paragraph": f"§ {number}",
+            "title": remainder,
+            "body": "",
+        }
 
-            print(
-                f"§6 module description enrichment: "
-                f"{matched_count} matched, "
-                f"{unmatched_count} unmatched"
-            )
+    def _append_block(
+        self,
+        paragraph: dict[str, Any],
+        block: dict[str, Any],
+        text: str,
+    ) -> None:
 
-            break
+        if not text:
+            return
 
-    return result
+        paragraph["blocks"].append(
+            {
+                "block_index": block.get("block_index"),
+                "page_index": block.get("page_index"),
+                "page_number": block.get("page_number"),
+                "text": text,
+            }
+        )
 
+    # ========================================================
+    # FINALIZE PARAGRAPH
+    # ========================================================
 
-# ============================================================
-# PUBLIC API
-# ============================================================
+    def _finalize_paragraph(
+        self,
+        paragraph: dict[str, Any],
+    ) -> dict[str, Any]:
 
-def structure_regulations(
-    blocks: list[dict[str, Any]],
-    toc: dict[str, Any],
-    module_description_index: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """
-    Public entry point.
+        blocks = paragraph["blocks"]
 
-    Keeps main.py clean.
-    """
+        text_parts = [
+            block["text"]
+            for block in blocks
+            if block["text"].strip()
+        ]
 
-    return parse_regulations(
-        blocks=blocks,
-        toc=toc,
-        module_description_index=module_description_index,
-    )
+        text = "\n".join(text_parts)
+
+        pages = [
+            block["page_number"]
+            for block in blocks
+            if block["page_number"] is not None
+        ]
+
+        result = {
+            "paragraph": paragraph["paragraph"],
+            "paragraph_title": paragraph["paragraph_title"],
+            "part": paragraph["part"],
+            "text": text,
+            "page_start": min(pages) if pages else None,
+            "page_end": max(pages) if pages else None,
+            "blocks": blocks,
+        }
+
+        return result

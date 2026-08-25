@@ -48,7 +48,7 @@ and source location:
 import re
 
 from typing import Any
-
+from dataclasses import asdict
 from src.models.source import (
     create_source_range,
 )
@@ -346,12 +346,10 @@ def extract_modules_from_text(
             description = module_description_index.get(
                 module_code
             )
-
             if description is not None:
-                module_description = (
-                    description.to_dict()
+                module_description = asdict(
+                    description
                 )
-
         # ----------------------------------------------------
         # Create main regulation source
         # ----------------------------------------------------
@@ -424,6 +422,14 @@ def extract_modules_from_text(
                 "paragraph_title": block.get(
                     "paragraph_title"
                 ),
+
+
+                # --------------------------------------------
+                # Detailed module description
+                # --------------------------------------------
+
+                "module_description": module_description,
+
 
                 # --------------------------------------------
                 # Source locations

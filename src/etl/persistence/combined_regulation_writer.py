@@ -3,14 +3,24 @@ from pathlib import Path
 from typing import Any
 
 
-class RegulationWriter:
+class CombinedRegulationWriter:
+    """
+    Persists the combined regulation structure.
 
-    def __init__(self, output_path: Path):
+    The combined structure contains the parsed regulation
+    together with normalized module descriptions attached
+    to §6 module references.
+    """
+
+    def __init__(
+        self,
+        output_path: Path,
+    ):
         self.output_path = output_path
 
     def write(
         self,
-        paragraphs: list[dict[str, Any]],
+        regulation: dict[str, Any],
     ) -> None:
 
         self.output_path.parent.mkdir(
@@ -22,8 +32,9 @@ class RegulationWriter:
             "w",
             encoding="utf-8",
         ) as file:
+
             json.dump(
-                paragraphs,
+                regulation,
                 file,
                 ensure_ascii=False,
                 indent=2,
