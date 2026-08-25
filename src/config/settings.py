@@ -138,7 +138,7 @@ NORMALIZED_MAIN_REGULATION_PATH = (
 
 CHUNKS_PATH = (
     PROCESSED_DATA_DIR
-    / "web_engineering_2025_chunks.jsonl"
+    / "chunks.jsonl"
 )
 
 

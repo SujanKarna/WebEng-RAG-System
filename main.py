@@ -6,6 +6,7 @@ from src.config.settings import (
     NORMALIZED_MAIN_REGULATION_PATH,
     PARSED_MODULE_DESCRIPTIONS_PATH,
     NORMALIZED_MODULE_DESCRIPTIONS_PATH,
+    CHUNKS_PATH
 )
 
 
@@ -96,6 +97,20 @@ from src.etl.persistence.normalized_main_regulation_writer import (
 
 from src.etl.persistence.module_description_writer import (
     ModuleDescriptionWriter,
+)
+
+# ============================================================
+# CHUNKER
+# ============================================================
+from src.chunking.chunk_writer import (
+    ChunkWriter,
+)
+from src.chunking.module_chunker import (
+    chunk_module_descriptions,
+)
+
+from src.chunking.regulation_chunker import (
+    chunk_main_regulation,
 )
 
 # ============================================================
@@ -399,6 +414,138 @@ def main():
         NORMALIZED_MAIN_REGULATION_PATH,
         NORMALIZED_MODULE_DESCRIPTIONS_PATH,
     )
+
+
+    # ========================================================
+    # 11. MODULE CHUNKING
+    # ========================================================
+
+    print("\n" + "=" * 80)
+    print("11. MODULE CHUNKING")
+    print("=" * 80)
+
+    # --------------------------------------------------------
+    # Load authoritative persisted normalized data
+    # --------------------------------------------------------
+
+    import json
+
+    with open(
+        NORMALIZED_MAIN_REGULATION_PATH,
+        "r",
+        encoding="utf-8",
+    ) as file:
+
+        persisted_main_regulation = json.load(
+            file
+        )
+
+    with open(
+        NORMALIZED_MODULE_DESCRIPTIONS_PATH,
+        "r",
+        encoding="utf-8",
+    ) as file:
+
+        persisted_modules = json.load(
+            file
+        )
+
+    print(
+        f"Loaded persisted main regulation: "
+        f"{len(persisted_main_regulation)} paragraphs"
+    )
+
+    print(
+        f"Loaded persisted module descriptions: "
+        f"{len(persisted_modules)} modules"
+    )
+
+    # --------------------------------------------------------
+    # Build regulation chunks
+    # --------------------------------------------------------
+
+    regulation_chunks = chunk_main_regulation(
+        regulation=persisted_main_regulation,
+    )
+
+    print(
+        f"Created regulation chunks: "
+        f"{len(regulation_chunks)}"
+    )
+
+    # --------------------------------------------------------
+    # Build module chunks
+    # --------------------------------------------------------
+
+    module_chunks = chunk_module_descriptions(
+        modules=persisted_modules,
+        regulation=persisted_main_regulation,
+    )
+
+    print(
+        f"Created module chunks: "
+        f"{len(module_chunks)}"
+    )
+
+    # --------------------------------------------------------
+    # Combine chunks
+    # --------------------------------------------------------
+
+    chunks = (
+        regulation_chunks
+        + module_chunks
+    )
+
+    # Re-index chunks globally
+    for index, chunk in enumerate(chunks):
+        chunk.chunk_index = index
+
+    print(
+        f"Total chunks: {len(chunks)}"
+    )
+
+    # --------------------------------------------------------
+    # Persist all chunks
+    # --------------------------------------------------------
+
+    chunk_writer = ChunkWriter(
+        CHUNKS_PATH
+    )
+
+    chunk_writer.write(
+        chunks
+    )
+
+    print(
+        "All chunks persisted."
+    )
+
+    print(
+        f"  {CHUNKS_PATH}"
+    )
+
+
+    # ========================================================
+    # 12. VALIDATE PERSISTED CHUNKS
+    # ========================================================
+
+    print("\n" + "=" * 80)
+    print("12. VALIDATE PERSISTED CHUNKS")
+    print("=" * 80)
+
+    from src.chunking.chunk_validator import ChunkValidator
+
+    validator = ChunkValidator(
+        CHUNKS_PATH
+    )
+
+    chunks = validator.load()
+
+    validator.summary(
+        chunks
+    )
+
+    validator.validate()
 
     # ========================================================
     # PIPELINE COMPLETE
