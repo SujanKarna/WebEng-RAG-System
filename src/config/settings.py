@@ -182,8 +182,8 @@ RETRIEVAL_MODULE_BOOST = 0.05
 # Keyword matching
 RETRIEVAL_KEYWORD_BOOST = 0.08
 
-FAISS_INDEX_DIR = (
-    PROCESSED_DATA_DIR / "vector_index"
+FAISS_INDEX_PATH = (
+    PROCESSED_DATA_DIR / "faiss_index"
 )
 
 # ============================================================

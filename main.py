@@ -12,6 +12,7 @@ from src.config.settings import (
     NORMALIZED_MODULE_DESCRIPTIONS_PATH,
     CHUNKS_PATH,
     EMBEDDINGS_PATH,
+    FAISS_INDEX_PATH,
 )
 
 # ============================================================
@@ -125,7 +126,7 @@ from src.embedding.embedding_writer import (
     EmbeddingWriter,
 )
 
-
+from src.retrieval.faiss_index import FAISSIndex
 # ============================================================
 # HELPERS
 # ============================================================
@@ -768,18 +769,176 @@ def main():
         f"\n  {EMBEDDINGS_PATH}"
     )
 
+
+    # ========================================================
+    # 14. FAISS INDEX
+    # ========================================================
+
+    print("\n" + "=" * 80)
+    print("14. FAISS INDEX")
+    print("=" * 80)
+
+    # --------------------------------------------------------
+    # Create FAISS index
+    # --------------------------------------------------------
+
+    faiss_index = FAISSIndex(
+        dimension=dimension
+    )
+
+    # --------------------------------------------------------
+    # Build metadata for FAISS
+    # --------------------------------------------------------
+
+    faiss_metadata = []
+
+    for record in embedding_records:
+
+        metadata = {
+            "chunk_id": record["chunk_id"],
+            "chunk_index": record["chunk_index"],
+            "document_id": record["document_id"],
+            "chunk_type": record["chunk_type"],
+            "text": record["text"],
+            "embedding_text": record["embedding_text"],
+            "context": record.get(
+                "context",
+                {},
+            ),
+            "page_start": record.get(
+                "page_start"
+            ),
+            "page_end": record.get(
+                "page_end"
+            ),
+            "zone": record.get(
+                "zone"
+            ),
+        }
+
+        faiss_metadata.append(
+            metadata
+        )
+
+    # --------------------------------------------------------
+    # Convert embeddings to NumPy array
+    # --------------------------------------------------------
+
+    faiss_embeddings = np.asarray(
+        [
+            record["embedding"]
+            for record in embedding_records
+        ],
+        dtype=np.float32,
+    )
+
+    # --------------------------------------------------------
+    # Validate
+    # --------------------------------------------------------
+
+    if faiss_embeddings.ndim != 2:
+
+        raise RuntimeError(
+            "FAISS embeddings must be a 2D matrix."
+        )
+
+    if faiss_embeddings.shape[0] != len(
+        faiss_metadata
+    ):
+
+        raise RuntimeError(
+            "Number of embeddings does not "
+            "match number of FAISS metadata records."
+        )
+
+    if faiss_embeddings.shape[1] != dimension:
+
+        raise RuntimeError(
+            "FAISS embedding dimension mismatch."
+        )
+
+    # --------------------------------------------------------
+    # Add vectors
+    # --------------------------------------------------------
+
+    faiss_index.add(
+        embeddings=faiss_embeddings,
+        metadata=faiss_metadata,
+    )
+
+    print(
+        f"FAISS vectors added: "
+        f"{faiss_index.index.ntotal}"
+    )
+
+    # --------------------------------------------------------
+    # Persist FAISS index
+    # --------------------------------------------------------
+
+    faiss_index.save(
+        str(FAISS_INDEX_PATH)
+    )
+
+    print(
+        "FAISS index successfully created."
+    )
+
+    print(
+        f"  {FAISS_INDEX_PATH}"
+    )
+
+    # --------------------------------------------------------
+    # Validate persisted index
+    # --------------------------------------------------------
+
+    loaded_faiss_index = FAISSIndex.load(
+        str(FAISS_INDEX_PATH)
+    )
+
+    if loaded_faiss_index.index.ntotal != len(
+        embedding_records
+    ):
+
+        raise RuntimeError(
+            "Persisted FAISS index contains "
+            "an unexpected number of vectors."
+        )
+
+    if len(
+        loaded_faiss_index.metadata
+    ) != len(
+        embedding_records
+    ):
+
+        raise RuntimeError(
+            "Persisted FAISS metadata count "
+            "does not match embeddings."
+        )
+
+    print(
+        "FAISS persistence validation passed."
+    )
+
+    print(
+        f"Vectors: "
+        f"{loaded_faiss_index.index.ntotal}"
+    )
+
+    print(
+        f"Dimension: "
+        f"{loaded_faiss_index.dimension}"
+    )
+
+
+    
     # ========================================================
     # PIPELINE COMPLETE
     # ========================================================
 
-    print("\n" + "=" * 80)
-    print("PIPELINE COMPLETE")
-    print("=" * 80)
-
-    print(
-        "ETL → parsing → normalization → "
-        "validation → chunking → embedding complete."
-    )
+    print("\n" + "=" * 80) 
+    print("PIPELINE COMPLETE") 
+    print("=" * 80) 
+    print( "ETL → parsing → normalization → validation " "→ chunking → embedding → FAISS indexing complete." )
 
 
 # ============================================================
