@@ -141,7 +141,10 @@ CHUNKS_PATH = (
     / "chunks.jsonl"
 )
 
-
+EMBEDDINGS_PATH = (
+    PROCESSED_DATA_DIR
+    / "embeddings.json"
+)
 
 
 # ============================================================ 

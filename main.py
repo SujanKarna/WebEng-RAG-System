@@ -6,10 +6,11 @@ from src.config.settings import (
     NORMALIZED_MAIN_REGULATION_PATH,
     PARSED_MODULE_DESCRIPTIONS_PATH,
     NORMALIZED_MODULE_DESCRIPTIONS_PATH,
-    CHUNKS_PATH
+    CHUNKS_PATH,
+    EMBEDDINGS_PATH
 )
 
-
+import numpy as np
 # ============================================================
 # EXTRACTION
 # ============================================================
@@ -547,6 +548,316 @@ def main():
 
     validator.validate()
 
+
+    # ========================================================
+    # 13. EMBEDDING
+    # ========================================================
+
+    print("\n" + "=" * 80)
+    print("13. EMBEDDING")
+    print("=" * 80)
+
+    import json
+
+    from src.embedding.embedder import BGEEmbedder
+    from src.embedding.embedding_writer import EmbeddingWriter
+
+
+    # --------------------------------------------------------
+    # Load authoritative persisted chunks
+    # --------------------------------------------------------
+
+    with open(
+        CHUNKS_PATH,
+        "r",
+        encoding="utf-8",
+    ) as file:
+
+        persisted_chunks = [
+            json.loads(line)
+            for line in file
+            if line.strip()
+        ]
+
+
+    print(
+        f"Loaded chunks: "
+        f"{len(persisted_chunks)}"
+    )
+
+
+    # --------------------------------------------------------
+    # Build semantic embedding text
+    # --------------------------------------------------------
+
+    def build_embedding_text(
+        chunk: dict,
+    ) -> str:
+
+        context = chunk.get(
+            "context",
+            {},
+        )
+
+        parts = []
+
+        # --------------------------------------------
+        # Part
+        # --------------------------------------------
+
+        part = context.get(
+            "part"
+        )
+
+        if part:
+
+            part_name = part.get(
+                "part",
+                ""
+            )
+
+            part_title = part.get(
+                "part_title",
+                ""
+            )
+
+            parts.append(
+                f"{part_name}: "
+                f"{part_title}".strip()
+            )
+
+        # --------------------------------------------
+        # Paragraph
+        # --------------------------------------------
+
+        paragraph = context.get(
+            "paragraph"
+        )
+
+        paragraph_title = context.get(
+            "paragraph_title"
+        )
+
+        if paragraph:
+
+            parts.append(
+                f"{paragraph}: "
+                f"{paragraph_title or ''}".strip()
+            )
+
+        # --------------------------------------------
+        # Section
+        # --------------------------------------------
+
+        section = context.get(
+            "section"
+        )
+
+        section_title = context.get(
+            "section_title"
+        )
+
+        if section:
+
+            parts.append(
+                f"Section {section}: "
+                f"{section_title or ''}".strip()
+            )
+
+        # --------------------------------------------
+        # Module
+        # --------------------------------------------
+
+        module_code = context.get(
+            "module_code"
+        )
+
+        module_name = context.get(
+            "module_name"
+        )
+
+        if module_code:
+
+            parts.append(
+                f"Module: "
+                f"{module_code} — "
+                f"{module_name or ''}".strip()
+            )
+
+        # --------------------------------------------
+        # Original chunk text
+        # --------------------------------------------
+
+        text = chunk.get(
+            "text",
+            ""
+        ).strip()
+
+        if text:
+            parts.append(text)
+
+        return "\n\n".join(
+            part
+            for part in parts
+            if part
+        )
+
+
+    embedding_texts = [
+        build_embedding_text(chunk)
+        for chunk in persisted_chunks
+    ]
+
+
+    print(
+        f"Prepared embedding texts: "
+        f"{len(embedding_texts)}"
+    )
+
+
+    # --------------------------------------------------------
+    # Create embedder
+    # --------------------------------------------------------
+
+    embedder = BGEEmbedder()
+
+
+    # --------------------------------------------------------
+    # Generate embeddings
+    # --------------------------------------------------------
+
+    embeddings = embedder.embed(
+        embedding_texts
+    )
+
+
+    # --------------------------------------------------------
+    # Validate
+    # --------------------------------------------------------
+
+    if len(embeddings) != len(
+        persisted_chunks
+    ):
+
+        raise RuntimeError(
+            "Number of embeddings does not "
+            "match number of chunks."
+        )
+
+
+    if embeddings.ndim != 2:
+
+        raise RuntimeError(
+            "Embeddings must be a 2D matrix."
+        )
+
+
+    dimension = embedder.dimension()
+
+
+    if embeddings.shape[1] != dimension:
+
+        raise RuntimeError(
+            "Embedding dimension mismatch."
+        )
+
+
+    # --------------------------------------------------------
+    # Validate values
+    # --------------------------------------------------------
+
+    if not np.isfinite(
+        embeddings
+    ).all():
+
+        raise RuntimeError(
+            "Embeddings contain NaN or infinite values."
+        )
+
+
+    # --------------------------------------------------------
+    # Persist embedding records
+    # --------------------------------------------------------
+
+    embedding_records = []
+
+    for chunk, embedding, embedding_text in zip(
+        persisted_chunks,
+        embeddings,
+        embedding_texts,
+    ):
+
+        embedding_records.append(
+            {
+                "chunk_id": chunk[
+                    "chunk_id"
+                ],
+
+                "chunk_index": chunk[
+                    "chunk_index"
+                ],
+
+                "document_id": chunk[
+                    "document_id"
+                ],
+
+                "chunk_type": chunk[
+                    "chunk_type"
+                ],
+
+                "text": chunk[
+                    "text"
+                ],
+
+                "embedding_text": embedding_text,
+
+                "context": chunk.get(
+                    "context",
+                    {},
+                ),
+
+                "page_start": chunk.get(
+                    "page_start"
+                ),
+
+                "page_end": chunk.get(
+                    "page_end"
+                ),
+
+                "zone": chunk.get(
+                    "zone"
+                ),
+
+                "embedding": embedding.tolist(),
+            }
+        )
+
+
+    # --------------------------------------------------------
+    # Persist
+    # --------------------------------------------------------
+
+    embedding_writer = EmbeddingWriter(
+        EMBEDDINGS_PATH
+    )
+
+    embedding_writer.write(
+        embedding_records
+    )
+
+
+    print(
+        f"Created embeddings: "
+        f"{len(embedding_records)}"
+    )
+
+    print(
+        f"Embedding dimension: "
+        f"{dimension}"
+    )
+
+
+    
     # ========================================================
     # PIPELINE COMPLETE
     # ========================================================
