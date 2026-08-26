@@ -4,4 +4,4 @@
 chroma_db/
 *.bin
 *.sqlite3
-data
+data/
