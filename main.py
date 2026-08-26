@@ -1,3 +1,7 @@
+import json
+
+import numpy as np
+
 from src.config.settings import (
     WEB_ENGINEERING_2025_PATH,
     RAW_EXTRACTION_PATH,
@@ -7,10 +11,9 @@ from src.config.settings import (
     PARSED_MODULE_DESCRIPTIONS_PATH,
     NORMALIZED_MODULE_DESCRIPTIONS_PATH,
     CHUNKS_PATH,
-    EMBEDDINGS_PATH
+    EMBEDDINGS_PATH,
 )
 
-import numpy as np
 # ============================================================
 # EXTRACTION
 # ============================================================
@@ -19,7 +22,6 @@ from src.etl.extract.pdf_extractor import (
     extract_pdf,
     save_extraction,
 )
-
 
 # ============================================================
 # PARSING
@@ -47,6 +49,17 @@ from src.etl.parser.module_description.module_description_parser import (
     parse_module_descriptions,
 )
 
+# ============================================================
+# NORMALIZATION
+# ============================================================
+
+from src.etl.parser.regulation.main_regulation_normalizer import (
+    MainRegulationNormalizer,
+)
+
+from src.etl.parser.module_description.module_description_normalizer import (
+    normalize_modules,
+)
 
 # ============================================================
 # VALIDATION
@@ -60,29 +73,13 @@ from src.etl.parser.module_description.module_description_normalizer_validator i
     print_normalized_validation_report,
 )
 
-
-
-# ============================================================
-# NORMALIZATION
-# ============================================================
-
-from src.etl.parser.regulation.main_regulation_normalizer import (
-    MainRegulationNormalizer,
+from src.etl.validator.cross_document_validator import (
+    print_cross_document_validation_report,
 )
 
-from src.etl.parser.module_description.module_description_normalizer import (
-    normalize_modules,
+from src.chunking.chunk_validator import (
+    ChunkValidator,
 )
-
-
-# ============================================================
-# VALIDATION
-# ============================================================
-
-from src.etl.parser.module_description.module_description_normalizer_validator import (
-    print_normalized_validation_report,
-)
-
 
 # ============================================================
 # PERSISTENCE
@@ -101,11 +98,13 @@ from src.etl.persistence.module_description_writer import (
 )
 
 # ============================================================
-# CHUNKER
+# CHUNKING
 # ============================================================
+
 from src.chunking.chunk_writer import (
     ChunkWriter,
 )
+
 from src.chunking.module_chunker import (
     chunk_module_descriptions,
 )
@@ -115,13 +114,142 @@ from src.chunking.regulation_chunker import (
 )
 
 # ============================================================
-# VALIDATOR
+# EMBEDDING
 # ============================================================
 
-from src.etl.validator.cross_document_validator import (
-    print_cross_document_validation_report,
+from src.embedding.embedder import (
+    BGEEmbedder,
 )
 
+from src.embedding.embedding_writer import (
+    EmbeddingWriter,
+)
+
+
+# ============================================================
+# HELPERS
+# ============================================================
+
+def build_embedding_text(chunk: dict) -> str:
+    """
+    Build a semantically enriched text representation of a chunk.
+
+    Structural metadata such as paragraph, section, module code,
+    and module name is included together with the original chunk
+    text before embedding.
+    """
+
+    context = chunk.get("context", {})
+
+    parts = []
+
+    # --------------------------------------------------------
+    # Part
+    # --------------------------------------------------------
+
+    part = context.get("part")
+
+    if part:
+        part_name = part.get("part", "")
+        part_title = part.get("part_title", "")
+
+        value = f"{part_name}: {part_title}".strip()
+
+        if value:
+            parts.append(value)
+
+    # --------------------------------------------------------
+    # Paragraph
+    # --------------------------------------------------------
+
+    paragraph = context.get("paragraph")
+    paragraph_title = context.get("paragraph_title")
+
+    if paragraph:
+        value = f"{paragraph}: {paragraph_title or ''}".strip()
+
+        if value:
+            parts.append(value)
+
+    # --------------------------------------------------------
+    # Section
+    # --------------------------------------------------------
+
+    section = context.get("section")
+    section_title = context.get("section_title")
+
+    if section:
+        value = (
+            f"Section {section}: "
+            f"{section_title or ''}"
+        ).strip()
+
+        if value:
+            parts.append(value)
+
+    # --------------------------------------------------------
+    # Module
+    # --------------------------------------------------------
+
+    module_code = context.get("module_code")
+    module_name = context.get("module_name")
+
+    if module_code:
+        value = (
+            f"Module: "
+            f"{module_code} — "
+            f"{module_name or ''}"
+        ).strip()
+
+        if value:
+            parts.append(value)
+
+    # --------------------------------------------------------
+    # Original chunk text
+    # --------------------------------------------------------
+
+    text = chunk.get("text", "").strip()
+
+    if text:
+        parts.append(text)
+
+    return "\n\n".join(parts)
+
+
+def load_json(path: str):
+    """
+    Load a JSON file using UTF-8 encoding.
+    """
+
+    with open(
+        path,
+        "r",
+        encoding="utf-8",
+    ) as file:
+        return json.load(file)
+
+
+def load_jsonl(path: str):
+    """
+    Load a JSONL file using UTF-8 encoding.
+    """
+
+    with open(
+        path,
+        "r",
+        encoding="utf-8",
+    ) as file:
+
+        return [
+            json.loads(line)
+            for line in file
+            if line.strip()
+        ]
+
+
+# ============================================================
+# MAIN PIPELINE
+# ============================================================
 
 def main():
 
@@ -142,10 +270,7 @@ def main():
         RAW_EXTRACTION_PATH,
     )
 
-    print(
-        "PDF extraction complete."
-    )
-
+    print("PDF extraction complete.")
 
     # ========================================================
     # 2. ZONE DETECTION
@@ -159,10 +284,7 @@ def main():
         pages
     )
 
-    print(
-        "Zone detection complete."
-    )
-
+    print("Zone detection complete.")
 
     # ========================================================
     # 3. TOC EXTRACTION
@@ -181,10 +303,7 @@ def main():
         TOC_PATH,
     )
 
-    print(
-        "TOC extraction complete."
-    )
-
+    print("TOC extraction complete.")
 
     # ========================================================
     # 4. CLEANING
@@ -202,7 +321,6 @@ def main():
         f"Cleaning complete: "
         f"{len(cleaned_blocks)} blocks"
     )
-
 
     # ========================================================
     # 5. MAIN REGULATION
@@ -225,23 +343,17 @@ def main():
         f"{len(main_regulation)}"
     )
 
-
-    # --------------------------------------------------------
-    # Persist parsed main regulation
-    # --------------------------------------------------------
-
-    main_regulation_writer = RegulationWriter(
+    regulation_writer = RegulationWriter(
         PARSED_MAIN_REGULATION_PATH
     )
 
-    main_regulation_writer.write(
+    regulation_writer.write(
         main_regulation
     )
 
     print(
         "Parsed main regulation persisted."
     )
-
 
     # ========================================================
     # 6. NORMALIZE MAIN REGULATION
@@ -251,12 +363,10 @@ def main():
     print("6. NORMALIZE MAIN REGULATION")
     print("=" * 80)
 
-    main_regulation_normalizer = (
-        MainRegulationNormalizer()
-    )
+    normalizer = MainRegulationNormalizer()
 
     normalized_main_regulation = (
-        main_regulation_normalizer.normalize(
+        normalizer.normalize(
             main_regulation
         )
     )
@@ -267,21 +377,16 @@ def main():
     )
 
     print_normalized_main_regulation_validation_report(
-    normalized_main_regulation
+        normalized_main_regulation
     )
 
-
-    # --------------------------------------------------------
-    # Persist normalized main regulation
-    # --------------------------------------------------------
-
-    normalized_main_regulation_writer = (
+    normalized_regulation_writer = (
         NormalizedMainRegulationWriter(
             NORMALIZED_MAIN_REGULATION_PATH
         )
     )
 
-    normalized_main_regulation_writer.write(
+    normalized_regulation_writer.write(
         normalized_main_regulation
     )
 
@@ -293,7 +398,6 @@ def main():
         f"  {NORMALIZED_MAIN_REGULATION_PATH}"
     )
 
-
     # ========================================================
     # 7. MODULE DESCRIPTIONS
     # ========================================================
@@ -301,11 +405,6 @@ def main():
     print("\n" + "=" * 80)
     print("7. MODULE DESCRIPTIONS")
     print("=" * 80)
-
-
-    # --------------------------------------------------------
-    # Merge module description blocks
-    # --------------------------------------------------------
 
     merged_modules = merge_module_blocks(
         cleaned_blocks
@@ -315,11 +414,6 @@ def main():
         f"Merged module descriptions: "
         f"{len(merged_modules)}"
     )
-
-
-    # --------------------------------------------------------
-    # Parse module descriptions
-    # --------------------------------------------------------
 
     module_descriptions = (
         parse_module_descriptions(
@@ -332,11 +426,6 @@ def main():
         f"{len(module_descriptions)}"
     )
 
-
-    # --------------------------------------------------------
-    # Persist parsed module descriptions
-    # --------------------------------------------------------
-
     module_writer = ModuleDescriptionWriter(
         PARSED_MODULE_DESCRIPTIONS_PATH
     )
@@ -348,7 +437,6 @@ def main():
     print(
         "Parsed module descriptions persisted."
     )
-
 
     # ========================================================
     # 8. NORMALIZE MODULE DESCRIPTIONS
@@ -366,11 +454,6 @@ def main():
         f"Normalized module descriptions: "
         f"{len(normalized_modules)}"
     )
-
-
-    # --------------------------------------------------------
-    # Persist normalized module descriptions
-    # --------------------------------------------------------
 
     normalized_module_writer = (
         ModuleDescriptionWriter(
@@ -390,9 +473,8 @@ def main():
         f"  {NORMALIZED_MODULE_DESCRIPTIONS_PATH}"
     )
 
-
     # ========================================================
-    # 9. VALIDATE MODULE DESCRIPTIONS
+    # 9. MODULE DESCRIPTION VALIDATION
     # ========================================================
 
     print("\n" + "=" * 80)
@@ -416,40 +498,21 @@ def main():
         NORMALIZED_MODULE_DESCRIPTIONS_PATH,
     )
 
-
     # ========================================================
-    # 11. MODULE CHUNKING
+    # 11. CHUNKING
     # ========================================================
 
     print("\n" + "=" * 80)
-    print("11. MODULE CHUNKING")
+    print("11. CHUNKING")
     print("=" * 80)
 
-    # --------------------------------------------------------
-    # Load authoritative persisted normalized data
-    # --------------------------------------------------------
+    persisted_main_regulation = load_json(
+        NORMALIZED_MAIN_REGULATION_PATH
+    )
 
-    import json
-
-    with open(
-        NORMALIZED_MAIN_REGULATION_PATH,
-        "r",
-        encoding="utf-8",
-    ) as file:
-
-        persisted_main_regulation = json.load(
-            file
-        )
-
-    with open(
-        NORMALIZED_MODULE_DESCRIPTIONS_PATH,
-        "r",
-        encoding="utf-8",
-    ) as file:
-
-        persisted_modules = json.load(
-            file
-        )
+    persisted_modules = load_json(
+        NORMALIZED_MODULE_DESCRIPTIONS_PATH
+    )
 
     print(
         f"Loaded persisted main regulation: "
@@ -461,10 +524,6 @@ def main():
         f"{len(persisted_modules)} modules"
     )
 
-    # --------------------------------------------------------
-    # Build regulation chunks
-    # --------------------------------------------------------
-
     regulation_chunks = chunk_main_regulation(
         regulation=persisted_main_regulation,
     )
@@ -473,10 +532,6 @@ def main():
         f"Created regulation chunks: "
         f"{len(regulation_chunks)}"
     )
-
-    # --------------------------------------------------------
-    # Build module chunks
-    # --------------------------------------------------------
 
     module_chunks = chunk_module_descriptions(
         modules=persisted_modules,
@@ -488,26 +543,18 @@ def main():
         f"{len(module_chunks)}"
     )
 
-    # --------------------------------------------------------
-    # Combine chunks
-    # --------------------------------------------------------
-
     chunks = (
         regulation_chunks
         + module_chunks
     )
 
-    # Re-index chunks globally
+    # Re-index globally.
     for index, chunk in enumerate(chunks):
         chunk.chunk_index = index
 
     print(
         f"Total chunks: {len(chunks)}"
     )
-
-    # --------------------------------------------------------
-    # Persist all chunks
-    # --------------------------------------------------------
 
     chunk_writer = ChunkWriter(
         CHUNKS_PATH
@@ -525,29 +572,25 @@ def main():
         f"  {CHUNKS_PATH}"
     )
 
-
     # ========================================================
-    # 12. VALIDATE PERSISTED CHUNKS
+    # 12. CHUNK VALIDATION
     # ========================================================
 
     print("\n" + "=" * 80)
-    print("12. VALIDATE PERSISTED CHUNKS")
+    print("12. CHUNK VALIDATION")
     print("=" * 80)
-
-    from src.chunking.chunk_validator import ChunkValidator
 
     validator = ChunkValidator(
         CHUNKS_PATH
     )
 
-    chunks = validator.load()
+    persisted_chunks = validator.load()
 
     validator.summary(
-        chunks
+        persisted_chunks
     )
 
     validator.validate()
-
 
     # ========================================================
     # 13. EMBEDDING
@@ -557,170 +600,36 @@ def main():
     print("13. EMBEDDING")
     print("=" * 80)
 
-    import json
+    print("Loading persisted chunks...")
 
-    from src.embedding.embedder import BGEEmbedder
-    from src.embedding.embedding_writer import EmbeddingWriter
-
-
-    # --------------------------------------------------------
-    # Load authoritative persisted chunks
-    # --------------------------------------------------------
-
-    with open(
-        CHUNKS_PATH,
-        "r",
-        encoding="utf-8",
-    ) as file:
-
-        persisted_chunks = [
-            json.loads(line)
-            for line in file
-            if line.strip()
-        ]
-
+    persisted_chunks = load_jsonl(
+        CHUNKS_PATH
+    )
 
     print(
         f"Loaded chunks: "
         f"{len(persisted_chunks)}"
     )
 
-
     # --------------------------------------------------------
-    # Build semantic embedding text
+    # Build embedding texts
     # --------------------------------------------------------
-
-    def build_embedding_text(
-        chunk: dict,
-    ) -> str:
-
-        context = chunk.get(
-            "context",
-            {},
-        )
-
-        parts = []
-
-        # --------------------------------------------
-        # Part
-        # --------------------------------------------
-
-        part = context.get(
-            "part"
-        )
-
-        if part:
-
-            part_name = part.get(
-                "part",
-                ""
-            )
-
-            part_title = part.get(
-                "part_title",
-                ""
-            )
-
-            parts.append(
-                f"{part_name}: "
-                f"{part_title}".strip()
-            )
-
-        # --------------------------------------------
-        # Paragraph
-        # --------------------------------------------
-
-        paragraph = context.get(
-            "paragraph"
-        )
-
-        paragraph_title = context.get(
-            "paragraph_title"
-        )
-
-        if paragraph:
-
-            parts.append(
-                f"{paragraph}: "
-                f"{paragraph_title or ''}".strip()
-            )
-
-        # --------------------------------------------
-        # Section
-        # --------------------------------------------
-
-        section = context.get(
-            "section"
-        )
-
-        section_title = context.get(
-            "section_title"
-        )
-
-        if section:
-
-            parts.append(
-                f"Section {section}: "
-                f"{section_title or ''}".strip()
-            )
-
-        # --------------------------------------------
-        # Module
-        # --------------------------------------------
-
-        module_code = context.get(
-            "module_code"
-        )
-
-        module_name = context.get(
-            "module_name"
-        )
-
-        if module_code:
-
-            parts.append(
-                f"Module: "
-                f"{module_code} — "
-                f"{module_name or ''}".strip()
-            )
-
-        # --------------------------------------------
-        # Original chunk text
-        # --------------------------------------------
-
-        text = chunk.get(
-            "text",
-            ""
-        ).strip()
-
-        if text:
-            parts.append(text)
-
-        return "\n\n".join(
-            part
-            for part in parts
-            if part
-        )
-
 
     embedding_texts = [
         build_embedding_text(chunk)
         for chunk in persisted_chunks
     ]
 
-
     print(
         f"Prepared embedding texts: "
         f"{len(embedding_texts)}"
     )
-
 
     # --------------------------------------------------------
     # Create embedder
     # --------------------------------------------------------
 
     embedder = BGEEmbedder()
-
 
     # --------------------------------------------------------
     # Generate embeddings
@@ -730,40 +639,36 @@ def main():
         embedding_texts
     )
 
-
     # --------------------------------------------------------
-    # Validate
+    # Validate embedding count
     # --------------------------------------------------------
 
     if len(embeddings) != len(
         persisted_chunks
     ):
-
         raise RuntimeError(
             "Number of embeddings does not "
             "match number of chunks."
         )
 
+    # --------------------------------------------------------
+    # Validate embedding shape
+    # --------------------------------------------------------
 
     if embeddings.ndim != 2:
-
         raise RuntimeError(
             "Embeddings must be a 2D matrix."
         )
 
-
     dimension = embedder.dimension()
 
-
     if embeddings.shape[1] != dimension:
-
         raise RuntimeError(
             "Embedding dimension mismatch."
         )
 
-
     # --------------------------------------------------------
-    # Validate values
+    # Validate embedding values
     # --------------------------------------------------------
 
     if not np.isfinite(
@@ -771,17 +676,21 @@ def main():
     ).all():
 
         raise RuntimeError(
-            "Embeddings contain NaN or infinite values."
+            "Embeddings contain NaN "
+            "or infinite values."
         )
 
-
     # --------------------------------------------------------
-    # Persist embedding records
+    # Build embedding records
     # --------------------------------------------------------
 
     embedding_records = []
 
-    for chunk, embedding, embedding_text in zip(
+    for (
+        chunk,
+        embedding,
+        embedding_text,
+    ) in zip(
         persisted_chunks,
         embeddings,
         embedding_texts,
@@ -832,9 +741,8 @@ def main():
             }
         )
 
-
     # --------------------------------------------------------
-    # Persist
+    # Persist embeddings
     # --------------------------------------------------------
 
     embedding_writer = EmbeddingWriter(
@@ -844,7 +752,6 @@ def main():
     embedding_writer.write(
         embedding_records
     )
-
 
     print(
         f"Created embeddings: "
@@ -856,8 +763,11 @@ def main():
         f"{dimension}"
     )
 
+    print(
+        f"Embeddings persisted:"
+        f"\n  {EMBEDDINGS_PATH}"
+    )
 
-    
     # ========================================================
     # PIPELINE COMPLETE
     # ========================================================
@@ -865,6 +775,12 @@ def main():
     print("\n" + "=" * 80)
     print("PIPELINE COMPLETE")
     print("=" * 80)
+
+    print(
+        "ETL → parsing → normalization → "
+        "validation → chunking → embedding complete."
+    )
+
 
 # ============================================================
 # ENTRY POINT
